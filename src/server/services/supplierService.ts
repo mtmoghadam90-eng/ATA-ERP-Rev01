@@ -6,7 +6,12 @@ import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
-import { normalizeSupplierDocuments } from "../../utils/supplierDocuments";
+import { normalizeSupplierDocuments, parseSupplierDocuments } from "../../utils/supplierDocuments";
+import { duplicateSupplier, mergedSupplierFields, unionBy } from "../../utils/supplierDuplicates";
+import { afterCommit } from "../afterCommit";
+
+/** How a task names a supplier as what it is about — the form's word, both spellings, and the Latin key. */
+const SUPPLIER_RELATION_SPELLINGS = ["تأمین‌کننده", "تامین‌کننده", "supplier"];
 
 /**
  * Supplier data access.
@@ -229,4 +234,101 @@ export async function deleteSupplier(
   );
 
   return "ok";
+}
+
+/* ------------------------------ duplicates ------------------------------ */
+
+/**
+ * The supplier this name would duplicate, if any. The whole table is read —
+ * the comparison folds spelling the collation cannot, and a supplier list is
+ * a few hundred rows, not a few hundred thousand.
+ */
+export async function findDuplicateSupplier(name: unknown, excludeId?: string | null) {
+  const rows = await getDb().supplier.findMany({ select: { id: true, name: true } });
+  return duplicateSupplier(String(name ?? ""), rows, excludeId);
+}
+
+/**
+ * Every key always present: `strict` is off here, so a discriminated union
+ * does not narrow and the refusal branch would not compile (see CLAUDE.md).
+ */
+export interface MergeOutcome {
+  ok: boolean;
+  status: number;
+  error: string | null;
+  moved: { purchaseOrders: number; inquiries: number; transactions: number; tasks: number } | null;
+}
+const refuse = (status: number, error: string): MergeOutcome => ({ ok: false, status, error, moved: null });
+
+/**
+ * Merge `sourceId` into `targetId`: everything that names the duplicate is
+ * moved to the record being kept, the kept record's blank fields are filled
+ * from the duplicate, and the duplicate is deleted — in **one transaction**, so
+ * a failure half way leaves both records exactly as they were rather than a
+ * history split three ways.
+ *
+ * Moved: purchase orders, supplier inquiries, transactions, and tasks related
+ * to the supplier. The target's own values win; its categories and files are
+ * the union of both.
+ */
+export async function mergeSuppliers(
+  sourceId: string,
+  targetId: string,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<MergeOutcome> {
+  if (!allowed(user)) return refuse(403, "شما اجازه دسترسی به این بخش را ندارید.");
+  if (!sourceId || !targetId || sourceId === targetId) {
+    return refuse(400, "دو تأمین‌کنندهٔ متفاوت برای ادغام انتخاب کنید.");
+  }
+  const db = getDb();
+  const [source, target] = await Promise.all([
+    db.supplier.findUnique({ where: { id: sourceId } }),
+    db.supplier.findUnique({ where: { id: targetId } }),
+  ]);
+  if (!source || !target) return refuse(404, "تأمین‌کننده یافت نشد.");
+
+  const parseList = (raw: string | null): string[] => {
+    try { const v = JSON.parse(raw ?? "[]"); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+  };
+
+  const moved = await db.$transaction(async (tx) => {
+    const purchaseOrders = (await tx.purchaseOrder.updateMany({ where: { supplierId: sourceId }, data: { supplierId: targetId } })).count;
+    const inquiries = (await tx.supplierInquiry.updateMany({ where: { supplierId: sourceId }, data: { supplierId: targetId } })).count;
+    const transactions = (await tx.transaction.updateMany({ where: { supplierId: sourceId }, data: { supplierId: targetId } })).count;
+    const tasks = (await tx.task.updateMany({
+      where: { relatedToType: { in: SUPPLIER_RELATION_SPELLINGS }, relatedToId: sourceId },
+      data: { relatedToId: targetId, relatedToName: target.name },
+    })).count;
+
+    const categories = unionBy(parseList(target.providedCategories), parseList(source.providedCategories), (c) => c.trim());
+    const documents = normalizeSupplierDocuments([
+      ...parseSupplierDocuments(target.documents), ...parseSupplierDocuments(source.documents),
+    ]);
+    await tx.supplier.update({
+      where: { id: targetId },
+      data: {
+        ...mergedSupplierFields(target, source),
+        providedCategories: toJsonColumn(categories),
+        documents: toJsonColumn(documents),
+      } as Prisma.SupplierUncheckedUpdateInput,
+    });
+    await tx.supplier.delete({ where: { id: sourceId } });
+    return { purchaseOrders, inquiries, transactions, tasks };
+  });
+
+  await afterCommit("supplier merge audit", () => logAction(
+    {
+      action: "DELETE",
+      module: "تامین‌کنندگان",
+      entityId: sourceId,
+      description: `ادغام تامین‌کننده «${source.name}» در «${target.name}» `
+        + `(${moved.purchaseOrders} سفارش خرید، ${moved.inquiries} استعلام، ${moved.transactions} تراکنش، ${moved.tasks} وظیفه منتقل شد)`,
+      beforeState: source,
+    },
+    user,
+    todayJalali,
+  ));
+
+  return { ok: true, status: 200, error: null, moved };
 }

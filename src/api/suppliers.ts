@@ -72,6 +72,11 @@ export const suppliersApi = {
 
   remove: (id: string) => api.delete<Record<string, never>>(`/api/suppliers/${id}`),
 
+  /** Moves everything naming `sourceId` to `targetId` and deletes the duplicate. */
+  merge: (sourceId: string, targetId: string) =>
+    api.post<{ moved: { purchaseOrders: number; inquiries: number; transactions: number; tasks: number } }>(
+      "/api/suppliers/merge", { sourceId, targetId }).then((r) => r.moved),
+
   /** Every match, for export only. Several round trips at the server's 200 cap. */
   listAll: async (
     query: Record<string, string | number | undefined>,
