@@ -187,6 +187,13 @@ export function projectToWriteInput(
     salesExpert: project.salesExpert ?? null,
     messagingContactId: project.messagingContactId ?? null,
     messagingChannel: project.messagingChannel ?? null,
+    /*
+     * «ارسال پیام خودکار برای این پروژه غیرفعال باشد». It was missing from this
+     * list, so the box on the form was never saved and every rule went on
+     * writing to the customer of a project somebody had exempted. Undefined
+     * (a caller that never read it) is «not edited».
+     */
+    suppressAutoMessages: project.suppressAutoMessages,
     financialContact: project.financialContact ?? null,
     technicalContact: project.technicalContact ?? null,
     endUser: project.endUser ?? null,
