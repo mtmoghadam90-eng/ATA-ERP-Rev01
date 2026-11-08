@@ -16,6 +16,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { inquiryCreatedNotice } from "../../utils/inquiryNotice";
 import { syncProjectStage } from "./projectService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import {
@@ -486,10 +487,23 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
 
   if (inquiry) {
     // Notification
+    // Name the job and the supplier: the notice used to say «برای پروژه» and
+    // print no project at all.
+    const noticeProject = inquiry.projectId
+      ? await getDb().project.findUnique({
+          where: { id: inquiry.projectId },
+          select: { code: true, name: true },
+        })
+      : null;
     await notifyModuleResponsible(
       "inquiries",
       "ثبت استعلام جدید",
-      inquiry.projectId ? `استعلام جدید ثبت شد برای پروژه` : `استعلام جدید ثبت شد (خرید انبار، بدون پروژه)`,
+      inquiryCreatedNotice({
+        hasProject: !!inquiry.projectId,
+        projectCode: noticeProject?.code,
+        projectName: noticeProject?.name,
+        supplierName: inquiry.supplierId ? await inquirySupplierName(inquiry.supplierId) : null,
+      }),
       user,
       inquiry.projectId,
     );

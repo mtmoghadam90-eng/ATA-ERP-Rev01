@@ -24711,6 +24711,21 @@ head("A project exempted from automated messages is saved as exempted");
     /if \(input\.workflowRuleId && project\?\.suppressAutoMessages\)/.test(readFileSync("src/server/services/messaging/messageService.ts", "utf8")));
 }
 
+head("The «new inquiry» notice names the project and the supplier");
+{
+  const { inquiryCreatedNotice } = await import("../src/utils/inquiryNotice");
+  eq("project code, name and supplier",
+    inquiryCreatedNotice({ hasProject: true, projectCode: "ATA-05-56", projectName: "شیر تخلیه", supplierName: "فراسو" }),
+    "استعلام جدید از «فراسو» برای پروژه ATA-05-56 — شیر تخلیه ثبت شد");
+  eq("a warehouse purchase says so",
+    inquiryCreatedNotice({ hasProject: false, supplierName: "فراسو" }), "استعلام جدید از «فراسو» ثبت شد (خرید انبار، بدون پروژه)");
+  eq("a project that could not be read leaves no dangling «برای پروژه»",
+    inquiryCreatedNotice({ hasProject: true }), "استعلام جدید برای یک پروژه ثبت شد");
+  const svc = readFileSync("src/server/services/inquiryService.ts", "utf8");
+  ok("the service sends it", /inquiryCreatedNotice\(\{\s*hasProject: !!inquiry\.projectId,/.test(svc)
+    && !svc.includes("`استعلام جدید ثبت شد برای پروژه`"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
