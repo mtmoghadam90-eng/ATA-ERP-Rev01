@@ -47,6 +47,8 @@ import MessageReactions from './MessageReactions';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
 import MeetingsView from './MeetingsView';
 import ActivityComposer from './ActivityComposer';
+import ActivityFilesFolderPrompt from './ActivityFilesFolderPrompt';
+import { fileAttachmentsInFolder, folderForCategory } from '../utils/activityFileFolder';
 import { openReferralsTo } from '../utils/openReferrals';
 import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
@@ -1379,6 +1381,38 @@ export default function ProjectsView({
 
     return () => { cancelled = true; };
   }, [selectedProjectForActivities?.id, modalTab]);
+
+  // «این فایل‌ها در پوشهٔ مدارک پروژه هم ذخیره شوند؟», after a message with files.
+  const [filesFolderPrompt, setFilesFolderPrompt] = useState<
+    { projectId: string; categoryName: string; files: ActivityAttachment[] } | null>(null);
+  const fileActivityAttachments = async (folder: string): Promise<boolean> => {
+    if (!filesFolderPrompt) return true;
+    try {
+      // Read fresh: `manualDocuments` is one JSON column, and writing back the
+      // copy this screen holds would drop anything filed since it was read.
+      const fresh = await projectsApi.get(filesFolderPrompt.projectId);
+      const raw = fresh.manualDocuments as unknown;
+      let existing: Record<string, unknown>[] = [];
+      if (Array.isArray(raw)) existing = raw as Record<string, unknown>[];
+      else if (typeof raw === 'string' && raw.trim()) {
+        try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) existing = parsed; } catch { /* unreadable: start empty */ }
+      }
+      const { documents, added } = fileAttachmentsInFolder(
+        existing, filesFolderPrompt.files, folder, getTodayShamsi(),
+        () => `doc-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      );
+      if (added > 0) {
+        const saved = await projectsApi.update(filesFolderPrompt.projectId, { manualDocuments: documents });
+        if (selectedProjectForActivities?.id === filesFolderPrompt.projectId) {
+          setSelectedProjectForActivities(detailToProject(saved));
+        }
+      }
+      return true;
+    } catch (err) {
+      reportError(err, 'ذخیرهٔ فایل‌ها در مدارک پروژه با خطا مواجه شد.');
+      return false;
+    }
+  };
 
   const getProjectFoldersAndFiles = (_p: any) => {
     const folders = [
@@ -6452,6 +6486,15 @@ export default function ProjectsView({
                                           });
                                           setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: [] }));
                                           setReplyTo(null);
+                                          // Nothing files a message's files in the
+                                          // project's documents, so ask.
+                                          if (attachmentData.length > 0 && selectedProjectForActivities) {
+                                            setFilesFolderPrompt({
+                                              projectId: selectedProjectForActivities.id,
+                                              categoryName: group.categoryName,
+                                              files: attachmentData,
+                                            });
+                                          }
                                           // No confirmation: the message is on
                                           // the feed in front of the person who
                                           // just wrote it.
@@ -6521,6 +6564,16 @@ export default function ProjectsView({
       )}
 
       {/* Confirm Delete Modal */}
+      {filesFolderPrompt && (
+        <ActivityFilesFolderPrompt
+          files={filesFolderPrompt.files}
+          categoryName={filesFolderPrompt.categoryName}
+          defaultFolder={folderForCategory(filesFolderPrompt.categoryName)}
+          onConfirm={fileActivityAttachments}
+          onClose={() => setFilesFolderPrompt(null)}
+        />
+      )}
+
       <ConfirmModal
         isOpen={deleteConfirmOpen}
         onClose={() => {
