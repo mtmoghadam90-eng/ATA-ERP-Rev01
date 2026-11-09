@@ -94,7 +94,9 @@ export function useTaskList(initialSearch = "", userId?: string | null) {
     scope: filters.scope === "all" ? undefined : filters.scope,
     lane: filters.lane,
     priority: filters.priority,
-    assignedToUserId: filters.assignedToUserId,
+    // Not on «به من ارجاع شده», where the control is not drawn: a colleague
+    // remembered from the other tab would empty the list with nothing saying why.
+    assignedToUserId: filters.scope === "toMe" ? undefined : filters.assignedToUserId,
     relatedToType: filters.relatedToType,
     overdue: filters.overdue ? "true" : undefined,
     hideCompleted: filters.hideCompleted ? "true" : undefined,

@@ -484,12 +484,14 @@ export default function TasksView({
         // The same box that searches the tasks. It reaches the request, the two
         // colleagues, the project and its customer — see `listReferrals`.
         search: search || undefined,
+        // The colleague filter, asked of the server so 200 rows are theirs.
+        assignedToUserId: selectedScope !== 'toMe' && list.filters.assignedToUserId !== 'all' ? list.filters.assignedToUserId : undefined,
         pageSize: 200,
       } as Record<string, string | number | undefined>, controller.signal)
       .then((data) => setReferrals(data.rows))
       .catch(() => { /* the board still draws its tasks */ });
     return () => controller.abort();
-  }, [mainTab, selectedScope, search, referralReload]);
+  }, [mainTab, selectedScope, search, referralReload, list.filters.assignedToUserId]);
 
   /** The referral whose thread is open, and the follow-up whose form is. */
   const [openReferral, setOpenReferral] = useState<ReferralRow | null>(null);
@@ -946,7 +948,7 @@ export default function TasksView({
         {
           lane: list.filters.lane,
           priority: list.filters.priority,
-          assignedToUserId: list.filters.assignedToUserId,
+          assignedToUserId: list.filters.scope === 'toMe' ? 'all' : list.filters.assignedToUserId,
           relatedToType: list.filters.relatedToType,
           overdue: list.filters.overdue,
           dateFrom: list.filters.dateFrom,
@@ -1234,7 +1236,14 @@ export default function TasksView({
           <button
             key={tab.key}
             type="button"
-            onClick={() => list.setFilter('scope', tab.key)}
+            onClick={() => {
+              list.setFilter('scope', tab.key);
+              // «به من ارجاع شده» is mine by definition: an assignee chosen on
+              // the other tab would leave it empty with nothing saying why.
+              if (tab.key === 'toMe' && list.filters.assignedToUserId !== 'all') {
+                list.setFilter('assignedToUserId', 'all');
+              }
+            }}
             id={`task-scope-${tab.key}`}
             className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition ${
               selectedScope === tab.key
@@ -1259,6 +1268,33 @@ export default function TasksView({
             className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition text-right"
           />
         </div>
+
+        {/*
+          «ارجاع‌شده به» — on «من ارجاع دادم» (and «همه»): the work handed to one
+          colleague, tasks and referrals together. Not drawn on «به من ارجاع شده»,
+          where the answer is always the reader.
+        */}
+        {selectedScope !== 'toMe' && (
+          <div className="relative w-full md:w-52 flex items-center gap-2">
+            <select
+              value={list.filters.assignedToUserId}
+              onChange={(e) => list.setFilter('assignedToUserId', e.target.value)}
+              id="task-assignee-filter"
+              className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
+            >
+              <option value="all">ارجاع‌شده به: همه</option>
+              {users
+                .filter((u) => u.id !== currentUser?.id || selectedScope === 'all')
+                .map((u) => (
+                  <option key={u.id} value={u.id}>{u.fullName}</option>
+                ))}
+              {list.filters.assignedToUserId !== 'all'
+                && !users.some((u) => u.id === list.filters.assignedToUserId) && (
+                <option value={list.filters.assignedToUserId} disabled>کاربر حذف‌شده</option>
+              )}
+            </select>
+          </div>
+        )}
 
         <div className="relative w-full md:w-52 flex items-center gap-2">
           <select

@@ -24781,6 +24781,24 @@ head("A message's files can be filed in the project's documents");
     && /projectsApi\.update\(filesFolderPrompt\.projectId, \{ manualDocuments: documents \}\)/.test(pv));
 }
 
+head("«من ارجاع دادم» can be narrowed to one colleague");
+{
+  const tv = readFileSync("src/components/TasksView.tsx", "utf8");
+  const tl = readFileSync("src/api/useTaskList.ts", "utf8");
+  ok("the control is drawn off «به من ارجاع شده» and writes the assignee filter",
+    /\{selectedScope !== 'toMe' && \([\s\S]{0,300}id="task-assignee-filter"/.test(tv)
+    && /onChange=\{\(e\) => list\.setFilter\('assignedToUserId', e\.target\.value\)\}/.test(tv));
+  ok("the tasks query sends it, except on «به من ارجاع شده»",
+    /assignedToUserId: filters\.scope === "toMe" \? undefined : filters\.assignedToUserId,/.test(tl));
+  ok("the referrals query sends it too, so the 200 rows are that colleague's",
+    /assignedToUserId: selectedScope !== 'toMe' && list\.filters\.assignedToUserId !== 'all' \? list\.filters\.assignedToUserId : undefined,/.test(tv));
+  ok("...and refetches when it changes", /\[mainTab, selectedScope, search, referralReload, list\.filters\.assignedToUserId\]/.test(tv));
+  const { TASK_FILTERABLE } = await import("../src/server/services/taskService");
+  const { REFERRAL_FILTERABLE } = await import("../src/server/services/activityService");
+  ok("both endpoints accept the filter", (TASK_FILTERABLE as readonly string[]).includes("assignedToUserId")
+    && (REFERRAL_FILTERABLE as readonly string[]).includes("assignedToUserId"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
