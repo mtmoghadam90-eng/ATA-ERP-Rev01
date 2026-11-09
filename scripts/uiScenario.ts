@@ -5419,6 +5419,32 @@ head("A meeting's file picker uploads what was picked");
   hostA.remove();
 }
 
+head("After a message with files, the screen asks where to file them");
+{
+  const { default: ActivityFilesFolderPrompt } = await import("../src/components/ActivityFilesFolderPrompt");
+  const hostF = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootF = createRoot(hostF);
+  let chosen = ""; let closed = 0;
+  await act(async () => {
+    rootF.render(React.createElement(ActivityFilesFolderPrompt, {
+      files: [{ name: "datasheet.pdf", size: "1 KB", url: "/uploads/d.pdf" }],
+      categoryName: "خرید",
+      defaultFolder: "سفارشات خرید تامین‌کنندگان",
+      onConfirm: async (folder: string) => { chosen = folder; return true; },
+      onClose: () => { closed += 1; },
+    }));
+  });
+  const select = hostF.querySelector("[data-activity-files-folder]") as HTMLSelectElement;
+  ok("the category's own folder is offered first", select.value === "سفارشات خرید تامین‌کنندگان");
+  await act(async () => { handlers(select).onChange?.({ target: { value: "سایر مدارک و فایل‌های دستی" } }); });
+  await act(async () => { (hostF.querySelector("[data-activity-files-yes]") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+  ok("«بله» files them in the folder chosen", chosen === "سایر مدارک و فایل‌های دستی", chosen);
+  ok("...and closes the question", closed === 1);
+  act(() => { rootF.unmount(); });
+  hostF.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

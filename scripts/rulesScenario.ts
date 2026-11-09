@@ -24757,6 +24757,30 @@ head("A supplier cannot be registered twice, and a duplicate can be merged");
   ok("the screen offers the merge", /<SupplierMergeModal/.test(readFileSync("src/components/SuppliersView.tsx", "utf8")));
 }
 
+head("A message's files can be filed in the project's documents");
+{
+  const { folderForCategory, fileAttachmentsInFolder, DOCUMENT_FOLDER_NAMES, OTHER_DOCUMENTS_FOLDER } = await import("../src/utils/activityFileFolder");
+  const { DOCUMENT_FOLDERS } = await import("../src/server/services/projectDocuments");
+  eq("the offered folders are the documents tab's own", [...DOCUMENT_FOLDER_NAMES].join("|"), DOCUMENT_FOLDERS.map((f) => f.name).join("|"));
+  eq("«خرید» files under the purchase orders", folderForCategory("خرید"), "سفارشات خرید تامین‌کنندگان");
+  eq("«استعلام قیمت» under the supplier inquiries", folderForCategory("استعلام قیمت"), "استعلام قیمت تأمین‌کنندگان");
+  eq("«بررسی درخواست» under the customer's request", folderForCategory("بررسی درخواست"), "درخواست مشتری و استعلام اولیه");
+  eq("the meetings category under the minutes", folderForCategory("صورتجلسات و جلسات"), "صورتجلسات");
+  eq("anything else under «سایر مدارک»", folderForCategory("طراحی"), OTHER_DOCUMENTS_FOLDER);
+  let n = 0;
+  const filed = fileAttachmentsInFolder(
+    [{ id: "d1", url: "/uploads/a.pdf", folderName: "x" }],
+    [{ name: "a.pdf", size: "1 KB", url: "/uploads/a.pdf" }, { name: "b.pdf", size: "2 KB", url: "/uploads/b.pdf" }, { name: "c", size: "", url: "data:x" }],
+    "صورتجلسات", "1405/08/18", () => `n${++n}`);
+  ok("a file already filed is not filed twice, and an inline one is skipped", filed.added === 1 && filed.documents.length === 2
+    && filed.documents[1].folderName === "صورتجلسات" && filed.documents[1].url === "/uploads/b.pdf");
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("sending a message with files asks", /if \(attachmentData\.length > 0 && selectedProjectForActivities\) \{\s*setFilesFolderPrompt\(/.test(pv));
+  ok("...and the answer reads the project fresh before writing the one column",
+    /const fresh = await projectsApi\.get\(filesFolderPrompt\.projectId\);/.test(pv)
+    && /projectsApi\.update\(filesFolderPrompt\.projectId, \{ manualDocuments: documents \}\)/.test(pv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
