@@ -19,6 +19,7 @@ function scheduledLabel(at: string): string {
   return formatDateTimeToShamsi(at).replace(/:\d{2}$/, '');
 }
 import CampaignsTab from './CampaignsTab';
+import MessagingInbox from './MessagingInbox';
 import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
@@ -57,7 +58,7 @@ interface Props {
   currentUser?: User | null;
 }
 
-type Tab = 'outbox' | 'campaigns' | 'templates' | 'providers';
+type Tab = 'outbox' | 'inbox' | 'campaigns' | 'templates' | 'providers';
 
 const STATUS_STYLE: Record<string, string> = {
   QUEUED: 'bg-sky-50 text-sky-700 border-sky-200',
@@ -268,6 +269,7 @@ export default function MessagingView({ settings, onUpdateSettings, currentUser 
       <div className="flex border-b border-slate-200">
         {([
           ['outbox', 'صف و سوابق ارسال'],
+          ['inbox', 'صندوق دریافتی'],
           ['campaigns', 'سگمنت‌ها و کمپین‌ها'],
           ['templates', 'قالب‌های پیام'],
           ...(canConfigure ? [['providers', 'تنظیمات درگاه‌ها'] as [Tab, string]] : []),
@@ -288,6 +290,7 @@ export default function MessagingView({ settings, onUpdateSettings, currentUser 
       </div>
 
       {tab === 'outbox' && <Outbox onError={report} onNotice={flash} />}
+      {tab === 'inbox' && <MessagingInbox onError={report} onNotice={flash} />}
       {tab === 'campaigns' && <CampaignsTab onError={report} onNotice={flash} />}
       {tab === 'templates' && <Templates settings={settings} onError={report} onNotice={flash} />}
       {tab === 'providers' && canConfigure && (

@@ -2174,6 +2174,38 @@ model MessageTemplate {
 
 /// The outbox: every message this system has sent or means to send.
 ///
+/// A message a customer sent **to** us — today, a reply to the Bale bot (the
+/// بازو Safir also sends through). Read by polling the bot's `getUpdates`, since
+/// this server is on a LAN nothing outside can reach. `updateId` is Bale's own
+/// number; the unique key is what stops one update being stored twice, and the
+/// highest stored is where the next poll starts. `customerId` is a plain column
+/// rather than a relation so a customer can still be deleted.
+model InboundMessage {
+  id             String    @id @default(uuid()) @db.NVarChar(36)
+  channel        String    @db.NVarChar(20)
+  updateId       BigInt
+  chatId         String    @db.NVarChar(60)
+  senderName     String?   @db.NVarChar(200)
+  senderUsername String?   @db.NVarChar(100)
+  /// A phone number the sender shared with the bot («ارسال شماره»).
+  phone          String?   @db.NVarChar(30)
+  /// TEXT, CONTACT, PHOTO, DOCUMENT, VOICE, OTHER.
+  kind           String    @db.NVarChar(20)
+  text           String?   @db.NVarChar(Max)
+  fileName       String?   @db.NVarChar(300)
+  customerId     String?   @db.NVarChar(36)
+  receivedAt     DateTime
+  readAt         DateTime?
+  readByName     String?   @db.NVarChar(200)
+  createdAt      DateTime  @default(now())
+
+  @@unique([channel, updateId])
+  @@index([chatId])
+  @@index([customerId])
+  @@index([readAt])
+  @@map("inbound_messages")
+}
+
 /// Manual sends and automated ones land in the same table on purpose — there is
 /// then one place that answers "what have we sent this customer", which is the
 /// question people actually ask.

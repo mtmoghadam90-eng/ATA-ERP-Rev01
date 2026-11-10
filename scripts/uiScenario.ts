@@ -5445,6 +5445,43 @@ head("After a message with files, the screen asks where to file them");
   hostF.remove();
 }
 
+head("«صندوق دریافتی» draws what customers wrote to the bot");
+{
+  const { default: MessagingInbox } = await import("../src/components/MessagingInbox");
+  const gI = globalThis as unknown as { fetch: typeof fetch };
+  const realFetchI = gI.fetch;
+  const asked: string[] = [];
+  gI.fetch = (async (url: string) => {
+    asked.push(String(url));
+    const body = {
+      success: true, total: 2, page: 1, pageSize: 100, totalPages: 1, unread: 1,
+      poll: { at: new Date().toISOString(), ok: true, received: 0, error: null, configured: true },
+      rows: [
+        { id: "m1", chatId: "77", senderName: "علی رضایی", senderUsername: null, phone: null, kind: "TEXT", text: "قیمت را بفرستید", fileName: null, customerId: null, customerName: null, receivedAt: new Date().toISOString(), readAt: null, readByName: null },
+        { id: "m2", chatId: "88", senderName: "مریم", senderUsername: null, phone: null, kind: "DOCUMENT", text: null, fileName: "spec.pdf", customerId: "c1", customerName: "شرکت نمونه", receivedAt: new Date().toISOString(), readAt: new Date().toISOString(), readByName: "محمد" },
+      ],
+    };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostI = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootI = createRoot(hostI);
+  await act(async () => {
+    rootI.render(React.createElement(MessagingInbox, { onError: () => {}, onNotice: () => {} }));
+  });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  ok("the inbox reads its own endpoint", asked.some((u) => u.includes("/api/messaging/inbox")));
+  const first = hostI.querySelector('[data-inbox-row="m1"]');
+  ok("an unmatched sender is drawn by name and marked as no customer",
+    !!first && first.textContent!.includes("علی رضایی") && first.textContent!.includes("مشتری نامشخص") && first.textContent!.includes("قیمت را بفرستید"));
+  const second = hostI.querySelector('[data-inbox-row="m2"]');
+  ok("a linked one is drawn under the customer, and a file by its name",
+    !!second && second.textContent!.includes("شرکت نمونه") && second.textContent!.includes("[فایل: spec.pdf]"));
+  ok("each row offers to link the chat to a customer", hostI.querySelectorAll("[data-inbox-link]").length === 2);
+  act(() => { rootI.unmount(); });
+  hostI.remove();
+  gI.fetch = realFetchI;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

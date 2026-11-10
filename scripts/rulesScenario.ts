@@ -24799,6 +24799,37 @@ head("«من ارجاع دادم» can be narrowed to one colleague");
     && (REFERRAL_FILTERABLE as readonly string[]).includes("assignedToUserId"));
 }
 
+head("Replies to the Bale bot reach «صندوق دریافتی»");
+{
+  const { parseBaleUpdate, inboundSummary } = await import("../src/utils/inbound");
+  const text = parseBaleUpdate({ update_id: 41, message: { date: 1762700000, chat: { id: 9876, type: "private", first_name: "علی" }, from: { id: 9876, first_name: "علی", last_name: "رضایی" }, text: "سلام، قیمت را بفرستید" } });
+  ok("a text reply is read with its chat, sender and words", text?.kind === "TEXT" && text.chatId === "9876"
+    && text.senderName === "علی رضایی" && text.text === "سلام، قیمت را بفرستید" && text.updateId === 41);
+  const contact = parseBaleUpdate({ update_id: 42, message: { chat: { id: 9876, type: "private" }, from: { id: 9876 }, contact: { phone_number: "989121234567", first_name: "علی" } } });
+  ok("a shared contact carries the phone the customer is matched on", contact?.kind === "CONTACT" && contact.phone === "989121234567");
+  const doc = parseBaleUpdate({ update_id: 43, message: { chat: { id: 1, type: "private" }, from: { id: 1 }, document: { file_name: "spec.pdf" } } });
+  eq("a file is named, not lost", doc ? inboundSummary(doc) : "", "[فایل: spec.pdf]");
+  eq("a group message is not a customer writing to us", parseBaleUpdate({ update_id: 44, message: { chat: { id: -5, type: "group" }, text: "x" } }), null);
+  eq("an edited message or a callback is not a new message", parseBaleUpdate({ update_id: 45, edited_message: { chat: { id: 1 } } }), null);
+
+  const svc = readFileSync("src/server/services/messaging/inboxService.ts", "utf8");
+  ok("the poll hands Bale the offset past what it read, so each update is read once",
+    /nextOffset = Math\.max\(nextOffset \?\? 0, id \+ 1\)/.test(svc) && /baleUpdates\(config, nextOffset\)/.test(svc));
+  ok("...the offset is advanced for an update that is not stored too", svc.indexOf("nextOffset = Math.max") < svc.indexOf("const parsed = parseBaleUpdate(update)"));
+  ok("a second copy of one update is the unique key doing its job", /code !== "P2002"/.test(svc));
+  ok("a sender is matched by chat, by a shared phone, then by an earlier link",
+    /where: \{ baleChatId: parsed\.chatId \}/.test(svc) && /mobileNormalized: mobile/.test(svc) && /chatId: parsed\.chatId, customerId: \{ not: null \}/.test(svc));
+  ok("overlapping polls share one", /if \(inFlight\) return inFlight;/.test(svc));
+  const server = readFileSync("server.ts", "utf8");
+  ok("the server reads the bot every minute and stops on shutdown",
+    /const inboxTimer = setInterval\(\(\) => \{\s*void pollInbox\(\)/.test(server) && /clearInterval\(inboxTimer\);/.test(server));
+  const ms = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  ok("the chat-id picker still lists people the poll already consumed", /getDb\(\)\.inboundMessage\.findMany\(/.test(ms));
+  const route = readFileSync("src/server/routes/messaging.ts", "utf8");
+  ok("the inbox endpoints sit behind the messaging module's key", /app\.get\("\/api\/messaging\/inbox", async \(req, res\) => \{\s*const user = await deps\.requireKeyAccess\(req, res, KEY, "read"\)/.test(route));
+  ok("the column the poll counts from exists", /model InboundMessage \{[\s\S]*?@@unique\(\[channel, updateId\]\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
