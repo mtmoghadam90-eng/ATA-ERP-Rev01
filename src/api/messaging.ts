@@ -143,6 +143,18 @@ export interface InboxRow {
   readByName: string | null;
 }
 
+/** An answer sent into a chat from the inbox, drawn in the conversation. */
+export interface InboxReply {
+  id: string;
+  chatId: string;
+  body: string;
+  status: string;
+  lastError: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  createdByName: string | null;
+}
+
 export interface InboxPoll {
   at: string;
   ok: boolean;
@@ -154,11 +166,13 @@ export interface InboxPoll {
 export const messagingApi = {
   /* inbox — the module's own permission */
   inbox: (query: Record<string, string | number | undefined>) =>
-    api.get<ListResponse<InboxRow> & { unread: number; poll: InboxPoll | null }>("/api/messaging/inbox", query),
+    api.get<ListResponse<InboxRow> & { unread: number; replies?: InboxReply[]; poll: InboxPoll | null }>("/api/messaging/inbox", query),
   inboxUnread: () => api.get<{ unread: number }>("/api/messaging/inbox/unread").then((r) => r.unread),
   pollInbox: () => api.post<{ poll: InboxPoll }>("/api/messaging/inbox/poll", {}).then((r) => r.poll),
   readAllInbox: () => api.post<{ marked: number }>("/api/messaging/inbox/read-all", {}).then((r) => r.marked),
   readInbox: (id: string) => api.post<{ marked: number }>(`/api/messaging/inbox/${id}/read`, {}).then((r) => r.marked),
+  replyInbox: (id: string, body: string) =>
+    api.post<{ messageId: string }>(`/api/messaging/inbox/${id}/reply`, { body }).then((r) => r.messageId),
   linkInbox: (chatId: string, customerId: string) =>
     api.post<{ linked: number }>("/api/messaging/inbox/link", { chatId, customerId }).then((r) => r.linked),
 

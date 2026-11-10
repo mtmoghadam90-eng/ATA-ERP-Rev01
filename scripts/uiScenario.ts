@@ -5470,13 +5470,19 @@ head("«صندوق دریافتی» draws what customers wrote to the bot");
   });
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
   ok("the inbox reads its own endpoint", asked.some((u) => u.includes("/api/messaging/inbox")));
-  const first = hostI.querySelector('[data-inbox-row="m1"]');
+  const first = hostI.querySelector('[data-inbox-chat="77"]');
   ok("an unmatched sender is drawn by name and marked as no customer",
     !!first && first.textContent!.includes("علی رضایی") && first.textContent!.includes("مشتری نامشخص") && first.textContent!.includes("قیمت را بفرستید"));
-  const second = hostI.querySelector('[data-inbox-row="m2"]');
+  const second = hostI.querySelector('[data-inbox-chat="88"]');
   ok("a linked one is drawn under the customer, and a file by its name",
     !!second && second.textContent!.includes("شرکت نمونه") && second.textContent!.includes("[فایل: spec.pdf]"));
-  ok("each row offers to link the chat to a customer", hostI.querySelectorAll("[data-inbox-link]").length === 2);
+  ok("each conversation offers to link the chat to a customer", hostI.querySelectorAll("[data-inbox-link]").length === 2);
+  const box = hostI.querySelector('[data-inbox-chat="77"] [data-inbox-reply-box] textarea') as HTMLTextAreaElement;
+  ok("each conversation has a reply box", !!box);
+  await act(async () => { handlers(box).onChange?.({ target: { value: "سلام، قیمت امروز ارسال می‌شود" } }); });
+  await act(async () => { (hostI.querySelector('[data-inbox-chat="77"] [data-inbox-reply-send]') as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  ok("sending posts the reply against that conversation's message", asked.some((u) => u.includes("/api/messaging/inbox/m1/reply")), asked.join(" | "));
   act(() => { rootI.unmount(); });
   hostI.remove();
   gI.fetch = realFetchI;

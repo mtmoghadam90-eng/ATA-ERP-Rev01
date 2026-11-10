@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../../db";
 import type { AuthUser } from "../../auth";
-import { CHANNELS } from "../../../utils/messaging";
+import { BALE_MODES, CHANNELS } from "../../../utils/messaging";
+import { processQueue, queueMessage } from "./messageService";
 import { inboundSummary, parseBaleUpdate, type ParsedInbound } from "../../../utils/inbound";
 import { baleUpdates, type BaleConfig } from "./drivers";
 import { normalizeMobile } from "../customerService";
@@ -166,7 +167,7 @@ export interface InboxRow {
 export async function listInbox(
   q: ListQuery,
   filters: { unread?: boolean; customerId?: string | null; chatId?: string | null },
-): Promise<ListResult<InboxRow> & { unread: number }> {
+): Promise<ListResult<InboxRow> & { unread: number; replies: InboxReply[] }> {
   const db = getDb();
   const where: Prisma.InboundMessageWhereInput = {};
   if (filters.unread) where.readAt = null;
@@ -188,7 +189,8 @@ export async function listInbox(
     customerId: r.customerId, customerName: r.customerId ? names.get(r.customerId) ?? null : null,
     receivedAt: r.receivedAt, readAt: r.readAt, readByName: r.readByName,
   }));
-  return { ...buildResult(out, total, q), unread };
+  const replies = await repliesForChats([...new Set(out.map((r) => r.chatId))]);
+  return { ...buildResult(out, total, q), unread, replies };
 }
 
 export async function unreadInboxCount(): Promise<number> {
@@ -223,4 +225,88 @@ export async function linkInboxChat(chatId: string, customerId: string): Promise
     return n;
   });
   return { ok: true, error: null, linked };
+}
+
+/* -------------------------------- replying -------------------------------- */
+
+/** An answer we sent into a chat, drawn in the conversation beside what they wrote. */
+export interface InboxReply {
+  id: string;
+  chatId: string;
+  body: string;
+  status: string;
+  lastError: string | null;
+  createdAt: Date;
+  sentAt: Date | null;
+  createdByName: string | null;
+}
+
+/** Marks the entity a reply row carries, so the conversation can find it again. */
+export const INBOX_REPLY_ENTITY = "inboundChat";
+
+/** The replies sent into these chats, oldest first. */
+export async function repliesForChats(chatIds: string[]): Promise<InboxReply[]> {
+  if (chatIds.length === 0) return [];
+  const rows = await getDb().message.findMany({
+    where: { channel: CHANNELS.BALE, entityType: INBOX_REPLY_ENTITY, entityId: { in: chatIds } },
+    orderBy: { createdAt: "asc" },
+    take: 500,
+    select: { id: true, entityId: true, body: true, status: true, lastError: true, createdAt: true, sentAt: true, createdByName: true },
+  });
+  return rows.map((r) => ({
+    id: r.id, chatId: r.entityId ?? "", body: r.body, status: r.status, lastError: r.lastError,
+    createdAt: r.createdAt, sentAt: r.sentAt, createdByName: r.createdByName,
+  }));
+}
+
+/**
+ * Answers a customer in the chat they wrote from.
+ *
+ * Through the outbox like every other message — `queueMessage` is the one
+ * sending path, so the quiet hours, the dry-run switch, the retries and the
+ * history all apply — and **by the bot**, addressed by the chat id, whatever
+ * mode the Bale channel is set to: Safir writes to a mobile number, while a
+ * reply belongs in the conversation the customer opened. The worker is kicked
+ * so the answer goes in seconds rather than at the next minute. A customer who
+ * asked not to be contacted is refused here as everywhere else, and answering
+ * marks that chat's messages read.
+ */
+export async function replyToInbox(
+  inboundId: string,
+  body: string,
+  user: AuthUser,
+): Promise<{ ok: boolean; error: string | null; messageId: string | null }> {
+  const text = String(body ?? "").trim();
+  if (!text) return { ok: false, error: "متن پاسخ خالی است.", messageId: null };
+  if (text.length > 4096) return { ok: false, error: "متن پاسخ بیش از ۴۰۹۶ نویسه است.", messageId: null };
+  const db = getDb();
+  const inbound = await db.inboundMessage.findUnique({ where: { id: inboundId } });
+  if (!inbound) return { ok: false, error: "پیام یافت نشد.", messageId: null };
+  if (!(await botConfig())) {
+    return { ok: false, error: "توکن ربات بله ثبت نشده است؛ پاسخ از طریق بازو ارسال نمی‌شود.", messageId: null };
+  }
+  if (inbound.customerId) {
+    const customer = await db.customer.findUnique({ where: { id: inbound.customerId }, select: { doNotContact: true } });
+    if (customer?.doNotContact) {
+      return { ok: false, error: "این مشتری درخواست کرده است برایش پیام فرستاده نشود.", messageId: null };
+    }
+  }
+  const message = await queueMessage({
+    channel: CHANNELS.BALE,
+    baleMode: BALE_MODES.BOT,
+    recipient: inbound.chatId,
+    recipientName: inbound.senderName ?? inbound.senderUsername ?? null,
+    body: text,
+    customerId: inbound.customerId,
+    entityType: INBOX_REPLY_ENTITY,
+    entityId: inbound.chatId,
+    createdByUserId: user.id,
+    createdByName: user.fullName ?? null,
+  });
+  await db.inboundMessage.updateMany({
+    where: { chatId: inbound.chatId, readAt: null },
+    data: { readAt: new Date(), readByName: user.fullName ?? null },
+  });
+  void processQueue().catch((err) => console.error("[inbox] sending the reply failed:", err));
+  return { ok: true, error: null, messageId: message.id };
 }

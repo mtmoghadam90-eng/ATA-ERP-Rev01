@@ -24830,6 +24830,34 @@ head("Replies to the Bale bot reach «صندوق دریافتی»");
   ok("the column the poll counts from exists", /model InboundMessage \{[\s\S]*?@@unique\(\[channel, updateId\]\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
 }
 
+head("A customer's message is answered from the inbox, through the outbox");
+{
+  const { conversationsOf } = await import("../src/utils/inbound");
+  const conv = conversationsOf(
+    [
+      { id: "a1", chatId: "A", receivedAt: "2026-11-10T08:00:00Z" },
+      { id: "b1", chatId: "B", receivedAt: "2026-11-10T09:00:00Z" },
+      { id: "a2", chatId: "A", receivedAt: "2026-11-10T08:10:00Z" },
+    ],
+    [
+      { id: "r1", chatId: "A", createdAt: "2026-11-10T08:05:00Z" },
+      { id: "r0", chatId: "A", createdAt: "2026-11-10T07:00:00Z" },
+      { id: "r2", chatId: "A", createdAt: "2026-11-10T09:30:00Z" },
+    ]);
+  eq("one conversation per chat, the most recently active first", conv.map((c) => c.chatId).join(","), "A,B");
+  eq("...messages and replies interleaved by time, a reply older than the page left out",
+    conv[0].entries.map((e) => (e.type === "in" ? e.row.id : e.reply.id)).join(","), "a1,r1,a2,r2");
+  const svc = readFileSync("src/server/services/messaging/inboxService.ts", "utf8");
+  ok("the reply goes through queueMessage, by the bot, to the chat it came from",
+    /await queueMessage\(\{\s*channel: CHANNELS\.BALE,\s*baleMode: BALE_MODES\.BOT,\s*recipient: inbound\.chatId,/.test(svc));
+  ok("...is tagged so the conversation finds it", /entityType: INBOX_REPLY_ENTITY,\s*entityId: inbound\.chatId,/.test(svc)
+    && /where: \{ channel: CHANNELS\.BALE, entityType: INBOX_REPLY_ENTITY, entityId: \{ in: chatIds \} \}/.test(svc));
+  ok("...honours the customer's opt-out", /if \(customer\?\.doNotContact\) \{/.test(svc));
+  ok("...and is sent now rather than at the next tick", /void processQueue\(\)\.catch/.test(svc));
+  ok("there is no second sending path in the inbox", !/tapi\.bale\.ai/.test(svc));
+  ok("the reply endpoint exists", /app\.post\("\/api\/messaging\/inbox\/:id\/reply"/.test(readFileSync("src/server/routes/messaging.ts", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
