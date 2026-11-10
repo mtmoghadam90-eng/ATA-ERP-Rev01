@@ -93,3 +93,38 @@ export function inboundSummary(row: { kind: string; text?: string | null; fileNa
   if (row.kind === "DOCUMENT" && row.fileName) return `[فایل: ${row.fileName}]`;
   return `[${INBOUND_KIND_LABELS[row.kind as InboundKind] ?? row.kind}]`;
 }
+
+/**
+ * A page of inbox rows and the replies sent into those chats, as conversations:
+ * one per chat, the chat whose newest message is newest first, and inside each
+ * the two kinds interleaved oldest-first, the way a messenger reads.
+ */
+export function conversationsOf<
+  M extends { id: string; chatId: string; receivedAt: string | Date },
+  R extends { id: string; chatId: string; createdAt: string | Date },
+>(messages: readonly M[], replies: readonly R[]): {
+  chatId: string;
+  messages: M[];
+  entries: ({ type: "in"; at: number; row: M } | { type: "out"; at: number; reply: R })[];
+}[] {
+  const time = (v: string | Date) => new Date(v).getTime();
+  const byChat = new Map<string, M[]>();
+  for (const m of messages) {
+    const list = byChat.get(m.chatId) ?? [];
+    list.push(m);
+    byChat.set(m.chatId, list);
+  }
+  const out = [...byChat.entries()].map(([chatId, list]) => {
+    const sorted = [...list].sort((a, b) => time(a.receivedAt) - time(b.receivedAt));
+    const first = time(sorted[0].receivedAt);
+    const entries = [
+      ...sorted.map((row) => ({ type: "in" as const, at: time(row.receivedAt), row })),
+      // A reply sent before the oldest message on this page belongs to a page further back.
+      ...replies.filter((r) => r.chatId === chatId && time(r.createdAt) >= first)
+        .map((reply) => ({ type: "out" as const, at: time(reply.createdAt), reply })),
+    ].sort((a, b) => a.at - b.at);
+    return { chatId, messages: sorted, entries };
+  });
+  const latest = (c: { entries: { at: number }[] }) => Math.max(...c.entries.map((e) => e.at));
+  return out.sort((a, b) => latest(b) - latest(a));
+}

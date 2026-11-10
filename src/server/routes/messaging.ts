@@ -13,7 +13,7 @@ import {
   retryMessage, saveProvider, sendManual, testProvider, updateTemplate,
 } from "../services/messaging/messageService";
 import {
-  INBOX_SORTABLE, inboxPollReport, linkInboxChat, listInbox, markInboxRead, pollInbox, unreadInboxCount,
+  INBOX_SORTABLE, inboxPollReport, linkInboxChat, listInbox, markInboxRead, pollInbox, replyToInbox, unreadInboxCount,
 } from "../services/messaging/inboxService";
 
 /**
@@ -536,6 +536,21 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, linked: result.linked });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/inbox/link");
+    }
+  });
+
+  app.post("/api/messaging/inbox/:id/reply", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const result = await replyToInbox(req.params.id, String((req.body ?? {}).body ?? ""), user);
+      if (!result.ok) {
+        res.status(400).json({ success: false, error: result.error });
+        return;
+      }
+      res.status(201).json({ success: true, messageId: result.messageId });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/inbox/:id/reply");
     }
   });
 

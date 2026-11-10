@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCheck, Inbox, Link2, Loader2, RefreshCw } from 'lucide-react';
-import { messagingApi, type InboxPoll, type InboxRow } from '../api/messaging';
+import { CheckCheck, Inbox, Link2, Loader2, RefreshCw, Send } from 'lucide-react';
+import { messagingApi, type InboxPoll, type InboxReply, type InboxRow } from '../api/messaging';
+import { conversationsOf } from '../utils/inbound';
 import { useEntitySearch } from '../api/useEntitySearch';
 import { SearchableSelect } from './SearchableSelect';
 import { formatDateTimeToShamsi } from '../dateUtils';
@@ -16,6 +17,7 @@ export default function MessagingInbox({
   onError, onNotice,
 }: { onError: (e: unknown, f: string) => void; onNotice: (t: string) => void }) {
   const [rows, setRows] = useState<InboxRow[]>([]);
+  const [replies, setReplies] = useState<InboxReply[]>([]);
   const [unread, setUnread] = useState(0);
   const [poll, setPoll] = useState<InboxPoll | null>(null);
   const [onlyUnread, setOnlyUnread] = useState(false);
@@ -28,6 +30,7 @@ export default function MessagingInbox({
     try {
       const page = await messagingApi.inbox({ pageSize: 100, unread: onlyUnread ? 'true' : undefined });
       setRows(page.rows);
+      setReplies(page.replies ?? []);
       setUnread(page.unread);
       setPoll(page.poll);
     } catch (err) {
@@ -116,41 +119,75 @@ export default function MessagingInbox({
           {onlyUnread ? 'پیام خوانده‌نشده‌ای نیست.' : 'هنوز پیامی از مشتری‌ها در بله دریافت نشده است.'}
         </div>
       ) : (
-        <div className="space-y-2">
-          {rows.map((row) => (
-            <div
-              key={row.id}
-              className={`border rounded-xl p-3 space-y-2 ${row.readAt ? 'border-slate-150 bg-white' : 'border-sky-200 bg-sky-50/40'}`}
-              data-inbox-row={row.id}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                {!row.readAt && <span className="px-2 py-0.5 rounded-full bg-sky-600 text-white font-bold">جدید</span>}
-                <span className="font-bold text-slate-800">
-                  {row.customerName || row.senderName || row.senderUsername || 'ناشناس'}
-                </span>
-                {row.customerName && (row.senderName || row.senderUsername) && (
-                  <span className="text-slate-400">({row.senderName || `@${row.senderUsername}`})</span>
-                )}
-                {!row.customerId && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">مشتری نامشخص</span>}
-                {row.phone && <span className="font-mono text-slate-600" dir="ltr">{row.phone}</span>}
-                <span className="text-slate-400 mr-auto">{formatDateTimeToShamsi(row.receivedAt)}</span>
-              </div>
-              <div className="text-sm text-slate-700 whitespace-pre-line" dir="auto">
-                {row.text || (row.kind === 'DOCUMENT' && row.fileName ? `[فایل: ${row.fileName}]` : `[${INBOUND_KIND_LABELS[row.kind as InboundKind] ?? row.kind}]`)}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {!row.readAt && (
-                  <button type="button" onClick={() => { void markRead(row); }} className="text-[11px] text-sky-700 hover:underline">
-                    علامت خوانده شده
+        <div className="space-y-3">
+          {conversationsOf(rows, replies).map((conv) => {
+            const head = conv.messages[conv.messages.length - 1];
+            const unreadHere = conv.messages.filter((m) => !m.readAt);
+            return (
+              <div key={conv.chatId} className={`border rounded-xl p-3 space-y-2 ${unreadHere.length ? 'border-sky-200 bg-sky-50/30' : 'border-slate-150 bg-white'}`} data-inbox-chat={conv.chatId}>
+                <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  {unreadHere.length > 0 && <span className="px-2 py-0.5 rounded-full bg-sky-600 text-white font-bold">{unreadHere.length.toLocaleString('fa-IR')} جدید</span>}
+                  <span className="font-bold text-slate-800 text-xs">
+                    {head.customerName || head.senderName || head.senderUsername || 'ناشناس'}
+                  </span>
+                  {head.customerName && (head.senderName || head.senderUsername) && (
+                    <span className="text-slate-400">({head.senderName || `@${head.senderUsername}`})</span>
+                  )}
+                  {!head.customerId && <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">مشتری نامشخص</span>}
+                  <button type="button" onClick={() => setLinking(head)} className="text-slate-600 hover:underline flex items-center gap-1 mr-auto" data-inbox-link>
+                    <Link2 size={12} /> {head.customerId ? 'تغییر مشتری' : 'اتصال به مشتری'}
                   </button>
-                )}
-                <button type="button" onClick={() => setLinking(row)} className="text-[11px] text-slate-600 hover:underline flex items-center gap-1" data-inbox-link>
-                  <Link2 size={12} /> {row.customerId ? 'تغییر مشتری' : 'اتصال به مشتری'}
-                </button>
-                {row.readAt && row.readByName && <span className="text-[10px] text-slate-400">خوانده شده توسط {row.readByName}</span>}
+                </div>
+
+                <div className="space-y-1.5">
+                  {conv.entries.map((entry) => entry.type === 'in' ? (
+                    <div key={entry.row.id} className="flex justify-end" data-inbox-row={entry.row.id}>
+                      <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm border ${entry.row.readAt ? 'bg-white border-slate-200' : 'bg-white border-sky-300'}`}>
+                        <div className="whitespace-pre-line text-slate-700" dir="auto">
+                          {entry.row.text || (entry.row.kind === 'DOCUMENT' && entry.row.fileName ? `[فایل: ${entry.row.fileName}]` : `[${INBOUND_KIND_LABELS[entry.row.kind as InboundKind] ?? entry.row.kind}]`)}
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
+                          {entry.row.phone && <span className="font-mono" dir="ltr">{entry.row.phone}</span>}
+                          <span>{formatDateTimeToShamsi(entry.row.receivedAt)}</span>
+                          {!entry.row.readAt && (
+                            <button type="button" onClick={() => { void markRead(entry.row); }} className="text-sky-700 hover:underline">علامت خوانده شده</button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={entry.reply.id} className="flex justify-start" data-inbox-reply={entry.reply.id}>
+                      <div className="max-w-[85%] rounded-xl px-3 py-2 text-sm bg-sky-600 text-white">
+                        <div className="whitespace-pre-line" dir="auto">{entry.reply.body}</div>
+                        <div className="mt-1 text-[10px] text-sky-100 flex flex-wrap gap-2">
+                          <span>{entry.reply.createdByName ?? ''}</span>
+                          <span>{formatDateTimeToShamsi(entry.reply.sentAt ?? entry.reply.createdAt)}</span>
+                          <span>{REPLY_STATUS[entry.reply.status] ?? entry.reply.status}</span>
+                        </div>
+                        {entry.reply.status === 'FAILED' && entry.reply.lastError && (
+                          <div className="mt-1 text-[10px] bg-rose-50 text-rose-700 rounded px-1.5 py-0.5">{entry.reply.lastError}</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <ReplyBox
+                  onSend={async (text) => {
+                    try {
+                      await messagingApi.replyInbox(head.id, text);
+                      onNotice('پاسخ در صف ارسال قرار گرفت.');
+                      await load();
+                      return true;
+                    } catch (err) {
+                      onError(err, 'ارسال پاسخ ممکن نشد.');
+                      return false;
+                    }
+                  }}
+                />
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -166,6 +203,50 @@ export default function MessagingInbox({
           onError={onError}
         />
       )}
+    </div>
+  );
+}
+
+const REPLY_STATUS: Record<string, string> = {
+  QUEUED: 'در صف ارسال',
+  SENDING: 'در حال ارسال',
+  SENT: 'ارسال شد',
+  FAILED: 'ارسال نشد',
+  CANCELLED: 'لغو شد',
+};
+
+/** The answer box under a conversation. Enter sends; Shift+Enter is a new line. */
+function ReplyBox({ onSend }: { onSend: (text: string) => Promise<boolean> }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    const value = text.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    const ok = await onSend(value);
+    setBusy(false);
+    if (ok) setText('');
+  };
+  return (
+    <div className="flex items-end gap-2 pt-1" data-inbox-reply-box>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
+        rows={2}
+        dir="auto"
+        placeholder="پاسخ از طریق بازوی بله..."
+        className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-sky-500"
+      />
+      <button
+        type="button"
+        onClick={() => { void send(); }}
+        disabled={busy || !text.trim()}
+        className="px-3 py-2 rounded-lg bg-sky-600 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
+        data-inbox-reply-send
+      >
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} ارسال
+      </button>
     </div>
   );
 }
