@@ -585,6 +585,34 @@ export async function baleRecentChats(config: BaleConfig): Promise<BaleChatsResu
   }
 }
 
+/**
+ * The bot's updates from `offset` on, **consumed**: Bale forgets what is below
+ * the offset asked for, which is how the inbox reads each message once. The
+ * inbox is the one caller; `baleRecentChats` deliberately sends no offset.
+ */
+export async function baleUpdates(
+  config: BaleConfig,
+  offset: number | null,
+): Promise<{ ok: boolean; updates: unknown[]; error?: string }> {
+  if (!config.botToken) return { ok: false, updates: [], error: "توکن ربات بله ثبت نشده است." };
+  try {
+    const query = offset !== null ? `?offset=${offset}&limit=100` : "?limit=100";
+    const response = await fetchWithTimeout(
+      `https://tapi.bale.ai/bot${config.botToken}/getUpdates${query}`,
+      { method: "GET" },
+    );
+    const payload = await response.json().catch(() => null) as
+      | { ok?: boolean; description?: string; result?: unknown }
+      | null;
+    if (!response.ok || !payload?.ok) {
+      return { ok: false, updates: [], error: baleFailure(String(payload?.description ?? ""), response.status) };
+    }
+    return { ok: true, updates: Array.isArray(payload.result) ? payload.result : [] };
+  } catch (err) {
+    return { ok: false, updates: [], error: describe(err) };
+  }
+}
+
 /* --------------------------------- Email --------------------------------- */
 
 export interface EmailConfig {

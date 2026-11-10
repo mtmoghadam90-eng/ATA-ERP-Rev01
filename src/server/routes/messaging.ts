@@ -12,6 +12,9 @@ import {
   listTemplates, messageSummary, messageVariables, processQueue, providerChats,
   retryMessage, saveProvider, sendManual, testProvider, updateTemplate,
 } from "../services/messaging/messageService";
+import {
+  INBOX_SORTABLE, inboxPollReport, linkInboxChat, listInbox, markInboxRead, pollInbox, unreadInboxCount,
+} from "../services/messaging/inboxService";
 
 /**
  * Messaging REST API.
@@ -461,6 +464,91 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
    * Registered ahead of `/api/messaging/messages/:id/...`, so "summary" is not
    * matched as an id.
    */
+  /* -------------------------------- inbox -------------------------------- */
+
+  /*
+   * «صندوق دریافتی»: what customers wrote to the Bale bot. The module's own key,
+   * like the outbox — reading a customer's reply is ordinary messaging work.
+   * The fixed paths are registered before `/inbox/:id/read`.
+   */
+  app.get("/api/messaging/inbox", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(req.query as Record<string, unknown>, INBOX_SORTABLE, []);
+      const result = await listInbox(q, {
+        unread: req.query.unread === "true",
+        customerId: typeof req.query.customerId === "string" ? req.query.customerId : null,
+        chatId: typeof req.query.chatId === "string" ? req.query.chatId : null,
+      });
+      res.json({ success: true, ...result, poll: inboxPollReport() });
+    } catch (err) {
+      sendError(res, err, "GET /api/messaging/inbox");
+    }
+  });
+
+  app.get("/api/messaging/inbox/unread", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, unread: await unreadInboxCount() });
+    } catch (err) {
+      sendError(res, err, "GET /api/messaging/inbox/unread");
+    }
+  });
+
+  app.post("/api/messaging/inbox/poll", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      res.json({ success: true, poll: await pollInbox() });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/inbox/poll");
+    }
+  });
+
+  app.post("/api/messaging/inbox/read-all", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      res.json({ success: true, marked: await markInboxRead(null, user) });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/inbox/read-all");
+    }
+  });
+
+  app.post("/api/messaging/inbox/link", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const chatId = String(body.chatId ?? "").trim();
+      const customerId = String(body.customerId ?? "").trim();
+      if (!chatId || !customerId) {
+        res.status(400).json({ success: false, error: "گفتگو و مشتری را مشخص کنید." });
+        return;
+      }
+      const result = await linkInboxChat(chatId, customerId);
+      if (!result.ok) {
+        res.status(404).json({ success: false, error: result.error });
+        return;
+      }
+      res.json({ success: true, linked: result.linked });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/inbox/link");
+    }
+  });
+
+  app.post("/api/messaging/inbox/:id/read", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      res.json({ success: true, marked: await markInboxRead([req.params.id], user) });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/inbox/:id/read");
+    }
+  });
+
   app.get("/api/messaging/summary", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;

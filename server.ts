@@ -50,6 +50,7 @@ import { registerApiTokenRoutes } from "./src/server/routes/apiTokens";
 import { authenticateToken } from "./src/server/services/apiTokenService";
 import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/apiTokens";
 import { processQueue, replanQueuedMessages } from "./src/server/services/messaging/messageService";
+import { pollInbox } from "./src/server/services/messaging/inboxService";
 import { ensureWhatsappRestored } from "./src/server/services/messaging/whatsappTransport";
 import { ensureTelegramSessionRestored } from "./src/server/services/messaging/telegramTransport";
 import { installTelegramCredentials } from "./src/server/services/messaging/telegramCredentials";
@@ -866,6 +867,19 @@ registerCampaignRoutes(app, routeDeps);
   messageTimer.unref?.();
 
   /*
+   * What customers wrote to the Bale bot, every minute.
+   *
+   * Polled rather than pushed for the same reason as the website's requests:
+   * nothing outside this LAN can reach the server. Bale keeps the last 2000
+   * updates for 24 hours, so a minute is far inside what is safe, and
+   * `pollInbox` does nothing while no bot token is configured.
+   */
+  const inboxTimer = setInterval(() => {
+    void pollInbox().catch((err) => console.error("[inbox] poll failed:", err));
+  }, MESSAGE_TICK_MS);
+  inboxTimer.unref?.();
+
+  /*
    * The website's price requests, every five minutes.
    *
    * The site is public and this server is on a private LAN, so nothing there
@@ -895,6 +909,7 @@ registerCampaignRoutes(app, routeDeps);
     clearInterval(rateTimer);
     clearInterval(valueTimer);
     clearInterval(messageTimer);
+    clearInterval(inboxTimer);
     clearInterval(webRfqTimer);
     server.close(() => {
       disconnectDb().finally(() => process.exit(0));

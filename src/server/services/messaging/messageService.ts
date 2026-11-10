@@ -326,7 +326,26 @@ export async function providerChats(channel: Channel): Promise<BaleChatsResult> 
   // Safir addresses people by their mobile; there is no chat id to look up.
   if (baleModeOf(provider.config) === BALE_MODES.SAFIR) return { ok: true, chats: [] };
 
-  return baleRecentChats(provider.config as BaleConfig);
+  /*
+   * The inbox polls the bot with an offset, which consumes the updates this
+   * reads — so the chats it has already stored are added, newest first, or
+   * the list would empty out a minute after somebody wrote.
+   */
+  const live = await baleRecentChats(provider.config as BaleConfig);
+  const stored = await getDb().inboundMessage.findMany({
+    where: { channel: CHANNELS.BALE },
+    orderBy: { receivedAt: "desc" },
+    take: 200,
+    select: { chatId: true, senderName: true, senderUsername: true },
+  });
+  const seen = new Set(live.chats.map((c) => c.id));
+  const chats = [...live.chats];
+  for (const row of stored) {
+    if (seen.has(row.chatId)) continue;
+    seen.add(row.chatId);
+    chats.push({ id: row.chatId, name: row.senderName || row.senderUsername || "بدون نام", type: "private" });
+  }
+  return { ...live, ok: live.ok || chats.length > 0, chats };
 }
 
 /* ------------------------------- templates ------------------------------- */
