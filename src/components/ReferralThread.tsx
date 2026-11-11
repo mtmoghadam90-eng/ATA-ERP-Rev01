@@ -66,6 +66,8 @@ export interface ReferralComposerSubmit {
    */
   dueDate?: string;
   dueDateByAssignee?: boolean;
+  /** «اطلاع به … از طریق پیام‌رسان» — the other party on their messenger. */
+  notifyMessenger?: boolean;
 }
 
 interface Props {
@@ -166,6 +168,16 @@ export default function ReferralThread({
   // own deadline, which is the strip above the conversation.
   const [dueDate, setNewDue] = useState('');
   const [dueByAssignee, setNewDueByAssignee] = useState(false);
+  /*
+   * «اطلاع به … از طریق پیام‌رسان», on by default and put back on after every
+   * send — the feed reply's switch. Stood down while somebody is named (the
+   * «@» raises a referral, which texts them already) or the referral is being
+   * forwarded (the new assignee is told by that).
+   */
+  const [notifyMessenger, setNotifyMessenger] = useState(true);
+  const counterpartName = isReferrer ? referral.assignedTo : isAssignee ? referral.assignedBy : undefined;
+  const messengerLocked = named.length > 0 || !!forwardTo;
+  const willNotifyMessenger = !!counterpartName && !messengerLocked && notifyMessenger;
 
   const send = async (outcome: ReplyOutcome) => {
     if (!onSubmit) return;
@@ -176,12 +188,14 @@ export default function ReferralThread({
         // Only where a referral is raised: a date typed and then un-named is
         // a promise nobody is making.
         ...(named.length > 0 ? { dueDate, dueDateByAssignee: dueByAssignee } : {}),
+        notifyMessenger: willNotifyMessenger,
       });
       setText('');
       setAttachments([]);
       setForwardTo('');
       setNewDue('');
       setNewDueByAssignee(false);
+      setNotifyMessenger(true);
     } finally {
       setBusy(false);
     }
@@ -464,6 +478,24 @@ export default function ReferralThread({
                 onDueByAssigneeChange={setNewDueByAssignee}
               />
             </div>
+          )}
+
+          {counterpartName && (
+            <label
+              className={`flex items-center gap-1.5 text-[11px] ${messengerLocked ? 'text-slate-400' : 'text-slate-600'}`}
+              data-thread-notify
+              title={messengerLocked
+                ? (forwardTo ? 'ارجاع به همکار خودش او را مطلع می‌کند' : 'نام‌بردن با @ خودش اطلاع را می‌فرستد')
+                : undefined}
+            >
+              <input
+                type="checkbox"
+                checked={messengerLocked ? false : notifyMessenger}
+                disabled={messengerLocked}
+                onChange={(e) => setNotifyMessenger(e.target.checked)}
+              />
+              اطلاع به {counterpartName} از طریق پیام‌رسان
+            </label>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
