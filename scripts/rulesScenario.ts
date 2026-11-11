@@ -24858,6 +24858,17 @@ head("A customer's message is answered from the inbox, through the outbox");
   ok("the reply endpoint exists", /app\.post\("\/api\/messaging\/inbox\/:id\/reply"/.test(readFileSync("src/server/routes/messaging.ts", "utf8")));
 }
 
+head("A referral reply can reach the other party on their messenger");
+{
+  const svc = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("the reply texts the counterpart through notifyStaff, not when forwarded or naming somebody",
+    /if \(input\.notifyMessenger === true && !input\.andForwarded && raised\.length === 0\) \{/.test(svc)
+    && /assigneeUserId: counterpart,[\s\S]{0,300}entityType: "referral",/.test(svc));
+  ok("the route reads the switch strictly", /notifyMessenger: body\.notifyMessenger === true,/.test(readFileSync("src/server/routes/activities.ts", "utf8")));
+  ok("the client sends it only when nothing is forwarded",
+    /\.\.\.\(body\.notifyMessenger && !forwardTo \? \{ notifyMessenger: true \} : \{\}\),/.test(readFileSync("src/api/inbox.ts", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

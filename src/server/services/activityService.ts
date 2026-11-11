@@ -1696,6 +1696,12 @@ export async function addReferralMessage(
     /** The deadline of the referrals an «@» in this reply raises. */
     dueDate?: string;
     dueDateByAssignee?: boolean;
+    /**
+     * «اطلاع به … از طریق پیام‌رسان»: the other party also gets the staff
+     * notification on their messenger. Read strictly by the route — absent is
+     * off — the feed reply's own rule.
+     */
+    notifyMessenger?: boolean;
   },
   user: AuthUser,
 ): Promise<
@@ -1904,6 +1910,35 @@ export async function addReferralMessage(
       authorName: author?.fullName ?? null,
       project: { id: project.id, code: project.code ?? null },
     }));
+  }
+
+  /*
+   * The other party on their messenger too, when the writer left the switch on.
+   *
+   * Not when the reply is also forwarded (the new assignee is told by that), and
+   * not when it names somebody: «@» raises a referral and `announceReferrals`
+   * has already texted whoever was named — two texts for one message is the
+   * pair people learn to dismiss. `notifyStaff` refuses yourself, a deactivated
+   * account and one with no mobile, and reports why.
+   */
+  if (input.notifyMessenger === true && !input.andForwarded && raised.length === 0) {
+    const counterpart = user.id === referral.assignedByUserId
+      ? referral.assignedToUserId
+      : referral.assignedByUserId;
+    if (counterpart) {
+      await afterCommit("referral reply messenger", () => notifyStaff({
+        kind: "ACTIVITY_REPLY",
+        assigneeUserId: counterpart,
+        actorUserId: user.id,
+        actorName: author?.fullName ?? null,
+        title: text ? noticeExcerpt(text) : `${files.length} فایل پیوست`,
+        projectId: project?.id ?? null,
+        projectCode: project?.code ?? null,
+        projectName: null,
+        entityType: "referral",
+        entityId: referral.id,
+      }));
+    }
   }
 
   return { message, reopened, referralsRaised: raised.length };

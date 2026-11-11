@@ -5488,6 +5488,40 @@ head("«صندوق دریافتی» draws what customers wrote to the bot");
   gI.fetch = realFetchI;
 }
 
+head("The referral thread asks whether to tell the other party on their messenger");
+{
+  const { default: ReferralThread } = await import("../src/components/ReferralThread");
+  const hostR = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootR = createRoot(hostR);
+  const sent: Record<string, unknown>[] = [];
+  await act(async () => {
+    rootR.render(React.createElement(ReferralThread, {
+      referral: { id: "rf1", status: "در انتظار اقدام", actionRequired: "سوالات را بفرستید",
+        assignedBy: "فرزاد جعفر کاظمی", assignedTo: "محمد توکل مقدم", assignedByUserId: "u2", assignedToUserId: "u1", messages: [] },
+      currentUserId: "u1",
+      formatDate: (v?: string) => v ?? "",
+      users: [{ id: "u2", fullName: "فرزاد جعفر کاظمی" }],
+      onSubmit: async (body: Record<string, unknown>) => { sent.push(body); },
+    } as never));
+  });
+  const toggle = hostR.querySelector("[data-thread-notify]");
+  ok("the switch names the other party", !!toggle && toggle.textContent!.includes("فرزاد جعفر کاظمی"));
+  const checkbox = toggle!.querySelector("input") as HTMLInputElement;
+  ok("...and starts on", checkbox.checked === true);
+  const area = hostR.querySelector("#referral-reply-rf1") as HTMLTextAreaElement;
+  await act(async () => { handlers(area).onChange?.({ target: { value: "پس از چند بار پیگیری اطلاعات را اعلام نکردند" } }); });
+  await act(async () => { (hostR.querySelector("#referral-send-rf1") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+  ok("sending carries the choice", sent[0]?.notifyMessenger === true, JSON.stringify(sent[0]));
+  await act(async () => { handlers(checkbox).onChange?.({ target: { checked: false } }); });
+  await act(async () => { handlers(area).onChange?.({ target: { value: "پیام دوم" } }); });
+  await act(async () => { (hostR.querySelector("#referral-send-rf1") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+  ok("...and switching it off sends no messenger notice", sent[1]?.notifyMessenger === false, JSON.stringify(sent[1]));
+  act(() => { rootR.unmount(); });
+  hostR.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

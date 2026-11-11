@@ -105,6 +105,8 @@ export interface ReferralReply {
   /** For the referrals an «@» in the reply raises. */
   dueDate?: string;
   dueDateByAssignee?: boolean;
+  /** «اطلاع از طریق پیام‌رسان» to the other party. */
+  notifyMessenger?: boolean;
 }
 
 export async function submitReferralReply(
@@ -133,6 +135,7 @@ export async function submitReferralReply(
     andForwarded: !!forwardTo,
     ...(body.dueDate ? { dueDate: body.dueDate } : {}),
     ...(body.dueDateByAssignee ? { dueDateByAssignee: true } : {}),
+    ...(body.notifyMessenger && !forwardTo ? { notifyMessenger: true } : {}),
   });
 
   // Forwarding sets its own status, so an outcome only applies without it.
@@ -204,6 +207,7 @@ export const inboxApi = {
       andForwarded?: boolean;
       dueDate?: string;
       dueDateByAssignee?: boolean;
+      notifyMessenger?: boolean;
     },
     /*
      * Answers with the message **and** whether a closed category had to be
