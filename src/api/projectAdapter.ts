@@ -62,6 +62,7 @@ export function rowToProject(row: ProjectRow): Project {
     communicationMethod: row.communicationMethod ?? undefined,
     customerInquiryNumber: row.customerInquiryNumber ?? undefined,
     referrerName: row.referrerName ?? undefined,
+    referrerCustomerId: row.referrerCustomerId ?? undefined,
     endUser: row.endUser ?? undefined,
     financialContact: row.financialContact ?? undefined,
     technicalContact: row.technicalContact ?? undefined,
@@ -90,6 +91,9 @@ export function detailToProject(detail: ProjectDetail): Project {
     communicationMethod: detail.communicationMethod ?? undefined,
     customerInquiryNumber: detail.customerInquiryNumber ?? undefined,
     referrerName: detail.referrerName ?? undefined,
+    referrerCustomerId: detail.referrerCustomerId ?? undefined,
+    commissionBasis: detail.commissionBasis ?? undefined,
+    commissionRate: detail.commissionRate ?? undefined,
     salesExpert: detail.salesExpert ?? undefined,
     messagingContactId: detail.messagingContactId ?? undefined,
     suppressAutoMessages: detail.suppressAutoMessages === true,
@@ -182,6 +186,12 @@ export function projectToWriteInput(
     adCampaignId: project.adCampaignId ?? null,
     leadQuality: project.leadQuality ?? null,
     referrerName: project.referrerName ?? null,
+    referrerCustomerId: project.referrerCustomerId ?? null,
+    // Absent is «not edited»; the server also drops them for an account
+    // without «معرف‌ها و پورسانت».
+    ...(project.commissionBasis !== undefined
+      ? { commissionBasis: project.commissionBasis || null, commissionRate: project.commissionRate ?? null }
+      : {}),
     communicationMethod: project.communicationMethod ?? null,
     customerInquiryNumber: project.customerInquiryNumber ?? null,
     salesExpert: project.salesExpert ?? null,

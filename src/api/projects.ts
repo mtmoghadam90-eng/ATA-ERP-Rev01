@@ -137,6 +137,7 @@ export interface ProjectRow {
   communicationMethod: string | null;
   customerInquiryNumber: string | null;
   referrerName: string | null;
+  referrerCustomerId?: string | null;
   endUser: string | null;
   financialContact: string | null;
   technicalContact: string | null;
@@ -181,6 +182,8 @@ export interface ProjectDetail extends ProjectRow {
   description: string | null;
   /** Non-technical proformas — what decides who owns the loss reason. */
   pricedProformaCount?: number;
+  commissionBasis?: string | null;
+  commissionRate?: number | null;
   adCampaignId?: string | null;
   adCampaign?: { id: string; code: string; topic: string } | null;
   endUserCustomerId: string | null;
@@ -231,6 +234,9 @@ export interface ProjectWriteInput {
   adCampaignId?: string | null;
   leadQuality?: string | null;
   referrerName?: string | null;
+  referrerCustomerId?: string | null;
+  commissionBasis?: string | null;
+  commissionRate?: number | null;
   communicationMethod?: string | null;
   customerInquiryNumber?: string | null;
   salesExpert?: string | null;

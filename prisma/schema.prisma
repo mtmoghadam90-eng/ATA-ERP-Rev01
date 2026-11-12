@@ -219,6 +219,10 @@ model Customer {
   doNotContact     Boolean                    @default(false)
   /// Their chat id on Bale, if they have given us one.
   baleChatId       String?                    @db.NVarChar(60)
+  /// The terms this contact is paid on for the jobs they bring (see
+  /// `src/utils/referralCommission.ts`). Null = no agreed terms yet.
+  commissionBasis  String?                    @db.NVarChar(20)
+  commissionRate   Float?
 
   messages Message[]
 
@@ -646,6 +650,14 @@ model Project {
   marketingChannel      String? @db.NVarChar(150)
   leadQuality           String? @db.NVarChar(100)
   referrerName          String? @db.NVarChar(200)
+  /// The contact who brought this job, from the customers list. A plain column
+  /// (no relation) so a customer can still be deleted; `referrerName` keeps the
+  /// name as typed for projects written before the picker existed.
+  referrerCustomerId    String? @db.NVarChar(36)
+  /// This project's own commission terms, overriding the referrer's: PROFIT_PERCENT,
+  /// SALE_PERCENT or FIXED (`commissionRate` is then an amount in rial). Null = the referrer's.
+  commissionBasis       String? @db.NVarChar(20)
+  commissionRate        Float?
   communicationMethod   String? @db.NVarChar(100)
   customerInquiryNumber String? @db.NVarChar(100)
 
@@ -680,6 +692,7 @@ model Project {
   purchaseOrders       PurchaseOrder[]
   transactions         Transaction[]
   inquiries            SupplierInquiry[]
+  referralPayouts      ReferralPayout[]
   deliveries           PackagingDelivery[]
   services             AfterSalesService[]
   categoryGroups       ProjectCategoryGroup[]
@@ -703,6 +716,7 @@ model Project {
   @@index([status])
   @@index([ownerUserId])
   @@index([creationDate])
+  @@index([referrerCustomerId])
   @@map("projects")
 }
 
@@ -2174,6 +2188,28 @@ model MessageTemplate {
 
 /// The outbox: every message this system has sent or means to send.
 ///
+/// A commission paid, or a gift given, to the person who brought a project.
+/// Recorded here and nowhere else — not a ledger transaction, by decision.
+model ReferralPayout {
+  id                 String    @id @default(uuid()) @db.NVarChar(36)
+  projectId          String    @db.NVarChar(36)
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  referrerCustomerId String?   @db.NVarChar(36)
+  /// CASH or GIFT.
+  kind               String    @db.NVarChar(10)
+  amountRial         Float
+  payoutDate         DateTime? @db.Date
+  payoutDateJalali   String?   @db.NVarChar(10)
+  description        String?   @db.NVarChar(Max)
+  createdByUserId    String?   @db.NVarChar(36)
+  createdByName      String?   @db.NVarChar(200)
+  createdAt          DateTime  @default(now())
+
+  @@index([projectId])
+  @@index([referrerCustomerId])
+  @@map("referral_payouts")
+}
+
 /// A message a customer sent **to** us — today, a reply to the Bale bot (the
 /// بازو Safir also sends through). Read by polling the bot's `getUpdates`, since
 /// this server is on a LAN nothing outside can reach. `updateId` is Bale's own

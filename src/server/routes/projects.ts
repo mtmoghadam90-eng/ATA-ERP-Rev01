@@ -3,6 +3,7 @@ import archiver from "archiver";
 import { parseListQuery } from "../listing";
 import { resolveUploadPath } from "../uploadsDir";
 import { RouteDeps, sendError } from "./types";
+import { AuthUser, hasPermission } from "../auth";
 import { nextProjectCode } from "../documentNumberSpecs";
 import {
   PROJECT_FILTERABLE, PROJECT_SORTABLE, ProjectInput,
@@ -31,7 +32,8 @@ function safeEntryName(name: string): string {
 const WRITABLE: (keyof ProjectInput)[] = [
   "code", "name", "customerId", "status", "lossReason", "description",
   "estimatedValueRial", "probabilityPercent", "marketingChannel", "adCampaignId", "leadQuality",
-  "referrerName", "communicationMethod", "customerInquiryNumber",
+  "referrerName", "referrerCustomerId", "commissionBasis", "commissionRate",
+  "communicationMethod", "customerInquiryNumber",
   "salesExpert", "financialContact", "technicalContact", "endUser",
   "ownerUserId", "endUserCustomerId", "financialContactId", "technicalContactId",
   "attachments", "manualDocuments", "milestoneRules", "customValues",
@@ -47,11 +49,17 @@ const WRITABLE: (keyof ProjectInput)[] = [
   "manualStage", "manualStageLocked",
 ];
 
-function pickInput(body: unknown): ProjectInput {
+function pickInput(body: unknown, user?: AuthUser): ProjectInput {
   const src = (body ?? {}) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const key of WRITABLE) {
     if (key in src) out[key] = src[key];
+  }
+  // What the referrer is paid is decided by whoever holds «معرف‌ها و پورسانت»,
+  // not by every account that can edit a project.
+  if (!hasPermission(user ?? null, "referrerCommissions")) {
+    delete out.commissionBasis;
+    delete out.commissionRate;
   }
   return out as ProjectInput;
 }
@@ -329,7 +337,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const input = pickInput(req.body);
+      const input = pickInput(req.body, user);
       if (!input.name || !String(input.name).trim()) {
         res.status(400).json({ success: false, error: "نام پروژه الزامی است." });
         return;
@@ -361,7 +369,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const project = await updateProject(req.params.id, pickInput(req.body), user, getTodayShamsi());
+      const project = await updateProject(req.params.id, pickInput(req.body, user), user, getTodayShamsi());
       if (!project) {
         res.status(403).json({ success: false, error: "شما اجازه تغییر این پروژه را ندارید." });
         return;

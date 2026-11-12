@@ -7,6 +7,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { fromJsonColumn, syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
+import { isCommissionBasis } from "../../utils/referralCommission";
 import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, afterSalesIsOpen, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
@@ -243,6 +244,7 @@ const LIST_SELECT = {
   communicationMethod: true,
   customerInquiryNumber: true,
   referrerName: true,
+  referrerCustomerId: true,
   endUser: true,
   financialContact: true,
   technicalContact: true,
@@ -615,6 +617,11 @@ export interface ProjectScalarInput {
   adCampaignId?: string | null;
   leadQuality?: string | null;
   referrerName?: string | null;
+  /** The contact who brought the job, from the customers list. */
+  referrerCustomerId?: string | null;
+  /** This project's own commission terms; null = the referrer's. */
+  commissionBasis?: string | null;
+  commissionRate?: unknown;
   communicationMethod?: string | null;
   customerInquiryNumber?: string | null;
   salesExpert?: string | null;
@@ -681,6 +688,14 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
   if ("adCampaignId" in input) set("adCampaignId", toNullableString(input.adCampaignId, 36));
   if ("leadQuality" in input) set("leadQuality", toNullableString(input.leadQuality, 100));
   if ("referrerName" in input) set("referrerName", toNullableString(input.referrerName, 200));
+  if ("referrerCustomerId" in input) set("referrerCustomerId", toNullableString(input.referrerCustomerId, 36));
+  if ("commissionBasis" in input) {
+    const basis = isCommissionBasis(input.commissionBasis) ? input.commissionBasis : null;
+    set("commissionBasis", basis);
+    // A rate without a basis would be a number nothing reads.
+    const rate = Number(input.commissionRate);
+    set("commissionRate", basis && input.commissionRate !== null && input.commissionRate !== "" && Number.isFinite(rate) && rate >= 0 ? rate : null);
+  }
   if ("communicationMethod" in input) set("communicationMethod", toNullableString(input.communicationMethod, 100));
   if ("customerInquiryNumber" in input) set("customerInquiryNumber", toNullableString(input.customerInquiryNumber, 100));
   if ("salesExpert" in input) set("salesExpert", toNullableString(input.salesExpert, 200));

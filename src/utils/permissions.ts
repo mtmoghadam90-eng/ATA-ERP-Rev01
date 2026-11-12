@@ -41,7 +41,7 @@ export function canSeeCosts(user: User | null | undefined): boolean {
  * let in. The server's `hasPermission`, the sidebar, the route guard and the
  * users screen all read this one set.
  */
-export const STRICT_MODULES: ReadonlySet<string> = new Set(['adEffectiveness']);
+export const STRICT_MODULES: ReadonlySet<string> = new Set(['adEffectiveness', 'referrerCommissions']);
 
 export function hasModulePermission(
   user: User | null | undefined,
@@ -142,6 +142,9 @@ const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   adEffectiveness:
     'ثبت هزینه و نتیجه کمپین‌های تبلیغاتی و گزارش اثربخشی کانال‌ها. به‌صورت پیش‌فرض فقط '
     + 'برای مدیر سیستم باز است؛ برای بقیه باید صریحاً تیک بخورد.',
+  referrerCommissions:
+    'پروژه‌هایی که هر معرف آورده، سود ناخالص هر کدام، پورسانت و ثبت پرداخت و هدیه. '
+    + 'به‌صورت پیش‌فرض فقط برای مدیر سیستم باز است؛ برای بقیه باید صریحاً تیک بخورد.',
   settings: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی',
   users: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها',
 };

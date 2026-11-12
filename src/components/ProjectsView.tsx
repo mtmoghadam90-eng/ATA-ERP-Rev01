@@ -35,6 +35,9 @@ import { getCodeError, cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
+import NumberField from './NumberField';
+import { screenPermitted } from '../utils/permissions';
+import { COMMISSION_BASES, COMMISSION_BASIS_LABELS } from '../utils/referralCommission';
 import { ALL_CHANNELS, CHANNEL_LABELS, channelForCommunicationMethod } from '../utils/messaging';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { Project, Customer, Product, ERPSettings, User as UserType } from '../types';
@@ -655,6 +658,10 @@ export default function ProjectsView({
   }, [showModal]);
   const [leadQuality, setLeadQuality] = useState("متوسط");
   const [referrerName, setReferrerName] = useState("");
+  // The referrer as a contact, and this project's own commission terms.
+  const [referrerCustomerId, setReferrerCustomerId] = useState("");
+  const [commissionBasis, setCommissionBasis] = useState("");
+  const [commissionRate, setCommissionRate] = useState("");
   const [financialContact, setFinancialContact] = useState("");
   const [technicalContact, setTechnicalContact] = useState("");
   const [communicationMethod, setCommunicationMethod] = useState("تلفن");
@@ -720,6 +727,17 @@ export default function ProjectsView({
     selectedId: endUserId || null,
     enabled: showModal,
   });
+
+  // The person or company who brought the job, picked from the contacts list.
+  const referrerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 25,
+    getLabel: (row) => row.companyName || `${row.firstName || ''} ${row.lastName || ''}`.trim(),
+    selectedId: referrerCustomerId || null,
+    enabled: showModal,
+  });
+  // What the referrer is paid is decided by whoever holds that module.
+  const canSetCommission = screenPermitted(currentUser as never, 'referrerCommissions');
 
   // Separate picker for contacts linked to the selected customer
   const linkedContactsPicker = useEntitySearch<CustomerRow>({
@@ -1064,6 +1082,9 @@ export default function ProjectsView({
     setAdCampaignLabel("");
     setLeadQuality(firstOption(settings.dropdownItems?.leadQualities, "متوسط"));
     setReferrerName("");
+    setReferrerCustomerId("");
+    setCommissionBasis("");
+    setCommissionRate("");
     // Both halves of each contact: the id that links it and the name that
     // records it. Clearing only the names left the previous project's links
     // attached to the next one.
@@ -1130,6 +1151,9 @@ export default function ProjectsView({
     setAdCampaignLabel(proj.adCampaignLabel || "");
     setLeadQuality(proj.leadQuality || "متوسط");
     setReferrerName(proj.referrerName || "");
+    setReferrerCustomerId(proj.referrerCustomerId || "");
+    setCommissionBasis(proj.commissionBasis || "");
+    setCommissionRate(proj.commissionRate !== undefined && proj.commissionRate !== null ? String(proj.commissionRate) : "");
     setFinancialContact(proj.financialContact || "");
     setTechnicalContact(proj.technicalContact || "");
     setCommunicationMethod(proj.communicationMethod || "تلفن");
@@ -1218,6 +1242,11 @@ export default function ProjectsView({
       adCampaignId: adCampaignId || null,
       leadQuality,
       referrerName,
+      referrerCustomerId: referrerCustomerId || undefined,
+      // Only an account that may set them sends them; absent is «not edited».
+      ...(canSetCommission
+        ? { commissionBasis, commissionRate: commissionBasis && commissionRate !== '' ? Number(commissionRate) : undefined }
+        : {}),
       financialContact,
       technicalContact,
       communicationMethod,
@@ -4468,17 +4497,72 @@ export default function ProjectsView({
                     </select>
                   </div>
 
-                  {/* Referrer Name */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'referrerName', 'نام معرف (در صورت وجود)')}</label>
-                    <input
-                      type="text"
-                      required={isFieldRequired(settings, 'projects', 'referrerName')}
-                      value={referrerName}
-                      onChange={(e) => setReferrerName(e.target.value)}
-                      placeholder="نام شخص یا سازمان معرفی‌کننده"
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
-                    />
+                  {/*
+                    The referrer, from the contacts list — the commission report
+                    («معرف‌ها و پورسانت») groups by this contact. The name is
+                    stored beside it; a project written before the picker keeps
+                    the name it was typed with until somebody picks a contact.
+                  */}
+                  <div className="space-y-1.5" data-project-referrer>
+                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'referrerName', 'معرف (در صورت وجود)')}</label>
+                    <div className="flex gap-1.5 items-center">
+                      <SearchableSelect wrapperClassName="flex-1 min-w-0"
+                        value={referrerCustomerId}
+                        onChange={(val) => {
+                          setReferrerCustomerId(val);
+                          const row = referrerPicker.matches.find((c) => c.id === val);
+                          setReferrerName(val
+                            ? (row ? (row.companyName || `${row.firstName || ''} ${row.lastName || ''}`.trim()) : referrerName)
+                            : '');
+                        }}
+                        required={isFieldRequired(settings, 'projects', 'referrerName')}
+                        onSearchChange={referrerPicker.setTerm}
+                        loading={referrerPicker.loading}
+                        options={[
+                          { value: '', label: '-- بدون معرف --' },
+                          ...buildCustomerOptions(referrerPicker.matches as unknown as Customer[]),
+                        ]}
+                        placeholder="-- جستجوی معرف در مخاطبین --"
+                      />
+                      {addCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuickAddCustomerTarget('referrer');
+                            setQuickAddType('customer');
+                          }}
+                          className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center"
+                          title="تعریف سریع معرف جدید"
+                        >
+                          <Plus size={18} />
+                        </button>
+                      )}
+                    </div>
+                    {!referrerCustomerId && referrerName && (
+                      <p className="text-[10px] text-amber-700" data-referrer-legacy>
+                        معرف ثبت‌شده به‌صورت متن: «{referrerName}» — برای محاسبهٔ پورسانت، او را از مخاطبین انتخاب کنید.
+                      </p>
+                    )}
+                    {canSetCommission && referrerCustomerId && (
+                      <div className="grid grid-cols-2 gap-1.5 pt-1" data-project-commission>
+                        <select
+                          value={commissionBasis}
+                          onChange={(e) => setCommissionBasis(e.target.value)}
+                          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        >
+                          <option value="">پورسانت: طبق شرایط معرف</option>
+                          {COMMISSION_BASES.map((b) => <option key={b} value={b}>{COMMISSION_BASIS_LABELS[b]}</option>)}
+                        </select>
+                        {commissionBasis && (
+                          <NumberField
+                            value={commissionRate === '' ? null : Number(commissionRate)}
+                            onChange={(v) => setCommissionRate(v === null ? '' : String(v))}
+                            placeholder={commissionBasis === 'FIXED' ? 'مبلغ (ریال)' : 'درصد'}
+                            className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                          />
+                        )}
+                      </div>
+                    )}
                   </div>
 
                 </div>
@@ -6727,6 +6811,7 @@ export default function ProjectsView({
               if (quickAddType === 'customer') {
                 customerPicker.include(newEntity);
                 endUserPicker.include(newEntity);
+                referrerPicker.include(newEntity);
                 linkedContactsPicker.include(newEntity);
               } else if (quickAddType === 'product') {
                 productPicker.include(newEntity);
@@ -6739,6 +6824,10 @@ export default function ProjectsView({
                   // pair the pickers write.
                   setEndUserId(newEntity.id);
                   setEndUser(newEntity.companyName
+                    || `${newEntity.firstName || ''} ${newEntity.lastName || ''}`.trim());
+                } else if (quickAddCustomerTarget === 'referrer') {
+                  setReferrerCustomerId(newEntity.id);
+                  setReferrerName(newEntity.companyName
                     || `${newEntity.firstName || ''} ${newEntity.lastName || ''}`.trim());
                 } else if (quickAddCustomerTarget === 'financialContact') {
                   setFinancialContactId(newEntity.id);

@@ -5522,6 +5522,45 @@ head("The referral thread asks whether to tell the other party on their messenge
   hostR.remove();
 }
 
+head("«معرف‌ها و پورسانت» draws each referrer and their projects");
+{
+  const { default: ReferrerCommissionsView } = await import("../src/components/ReferrerCommissionsView");
+  const gC = globalThis as unknown as { fetch: typeof fetch };
+  const realFetchC = gC.fetch;
+  const askedC: string[] = [];
+  gC.fetch = (async (url: string) => {
+    askedC.push(String(url));
+    const body = {
+      success: true, truncated: false,
+      referrers: [{
+        customerId: "c9", name: "مهندس احمدی", exists: true, commissionBasis: "PROFIT_PERCENT", commissionRate: 10,
+        referred: 2, won: 1, revenueRial: 1000000000, grossProfitRial: 200000000, earned: 20000000, payable: 10000000, given: 0, due: 10000000,
+        projects: [{
+          projectId: "p1", code: "ATA-05-60", name: "فلومتر ورتکس", status: "برنده (موفق)", customerName: "پالایشگاه",
+          referrerCustomerId: "c9", won: true, winningDateJalali: "1405/08/01", creationDateJalali: "1405/06/01",
+          revenueRial: 1000000000, grossProfitRial: 200000000, marginPercent: 20, costCoveragePercent: 100, collectedPercent: 50,
+          terms: { basis: "PROFIT_PERCENT", rate: 10, source: "REFERRER" }, earned: 20000000, payable: 10000000, given: 0, due: 10000000, state: "PAYABLE",
+        }],
+      }],
+    };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostC = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootC = createRoot(hostC);
+  await act(async () => { rootC.render(React.createElement(ReferrerCommissionsView)); });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  ok("the report reads its own endpoint", askedC.some((u) => u.includes("/api/referrer-commissions")));
+  const card = hostC.querySelector('[data-referrer="c9"]');
+  ok("each referrer is drawn with their terms and totals", !!card && card.textContent!.includes("مهندس احمدی") && card.textContent!.includes("10٪ از سود"));
+  ok("their projects are folded until pressed", !hostC.querySelector('[data-referred-project="p1"]'));
+  await act(async () => { (hostC.querySelector("[data-referrer-toggle]") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const row = hostC.querySelector('[data-referred-project="p1"]');
+  ok("...and listed with their figures and state once opened", !!row && row.textContent!.includes("ATA-05-60") && row.textContent!.includes("قابل پرداخت"));
+  act(() => { rootC.unmount(); });
+  hostC.remove();
+  gC.fetch = realFetchC;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
