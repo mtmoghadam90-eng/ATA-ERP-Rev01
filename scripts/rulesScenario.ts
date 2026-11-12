@@ -24869,6 +24869,43 @@ head("A referral reply can reach the other party on their messenger");
     /\.\.\.\(body\.notifyMessenger && !forwardTo \? \{ notifyMessenger: true \} : \{\}\),/.test(readFileSync("src/api/inbox.ts", "utf8")));
 }
 
+head("«معرف‌ها و پورسانت»: who brought the job and what they are owed");
+{
+  const rc = await import("../src/utils/referralCommission");
+  const referrer = { commissionBasis: "PROFIT_PERCENT", commissionRate: 10 };
+  eq("a project with no terms of its own uses the referrer's", rc.resolveTerms({}, referrer)?.source, "REFERRER");
+  eq("...and its own win", rc.resolveTerms({ commissionBasis: "FIXED", commissionRate: 5_000_000 }, referrer)?.basis, "FIXED");
+  eq("no terms anywhere is no terms, not a guess", rc.resolveTerms({}, null), null);
+  const t = rc.resolveTerms({}, referrer);
+  eq("10% of the gross profit", rc.commissionEarned(t, { won: true, revenueRial: 1_000_000_000, grossProfitRial: 200_000_000 }), 20_000_000);
+  eq("a loss earns no profit commission", rc.commissionEarned(t, { won: true, revenueRial: 1_000, grossProfitRial: -500 }), 0);
+  eq("a project not won earns nothing", rc.commissionEarned(t, { won: false, revenueRial: 1_000, grossProfitRial: 500 }), 0);
+  eq("a percentage of the sale", rc.commissionEarned({ basis: "SALE_PERCENT", rate: 2, source: "PROJECT" }, { won: true, revenueRial: 1_000_000, grossProfitRial: 0 }), 20_000);
+  eq("payable follows what the customer has paid", rc.commissionPayable(20_000_000, 50), 10_000_000);
+  eq("...and never beyond the whole", rc.commissionPayable(20_000_000, 130), 20_000_000);
+  eq("half collected, nothing given: payable", rc.commissionState({ terms: t, won: true, earned: 100, payable: 50, given: 0 }), "PAYABLE");
+  eq("payable given, rest awaiting the customer", rc.commissionState({ terms: t, won: true, earned: 100, payable: 50, given: 50 }), "AWAITING_PAYMENT");
+  eq("all given: paid", rc.commissionState({ terms: t, won: true, earned: 100, payable: 100, given: 100 }), "PAID");
+  eq("no terms reads as such", rc.commissionState({ terms: null, won: true, earned: 0, payable: 0, given: 0 }), "NO_TERMS");
+
+  const svc = readFileSync("src/server/services/referrerCommissionService.ts", "utf8");
+  ok("profit is the customer-value ranking's own rule", /grossProfitOf\(salesByProject\.get\(p\.id\) \?\? \[\], costs\)/.test(svc));
+  ok("the collected share is the project finance's own", /finance\.get\(p\.id\)\?\.settlementPercent/.test(svc));
+  ok("every entry point checks the strict flag", (svc.match(/hasPermission\(user, REFERRER_PERMISSION\)/g) ?? []).length >= 5);
+  const { STRICT_MODULES } = await import("../src/utils/permissions");
+  ok("the module is strict: absent denies", STRICT_MODULES.has("referrerCommissions"));
+  const route = readFileSync("src/server/routes/projects.ts", "utf8");
+  ok("only an account holding the module may set a project's commission terms",
+    /if \(!hasPermission\(user \?\? null, "referrerCommissions"\)\) \{\s*delete out\.commissionBasis;\s*delete out\.commissionRate;/.test(route)
+    && /pickInput\(req\.body, user\)/.test(route));
+  ok("merging a customer moves the jobs they referred and their payouts",
+    /referrerCustomerId: fromId \}, data: \{ referrerCustomerId: toId \}/.test(readFileSync("src/server/services/customerService.ts", "utf8"))
+    && /tx\.referralPayout\.updateMany/.test(readFileSync("src/server/services/customerService.ts", "utf8")));
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the project form picks the referrer from the contacts list", /data-project-referrer[\s\S]{0,1200}onSearchChange=\{referrerPicker\.setTerm\}/.test(pv)
+    && /referrerCustomerId: referrerCustomerId \|\| undefined,/.test(pv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

@@ -139,6 +139,8 @@ export const KEY_PERMISSION: Record<string, string | null> = {
   erp_messaging: "messaging",
   // «اثربخشی تبلیغات» — a strict flag (`STRICT_MODULES`): absent denies.
   erp_ad_campaigns: "adEffectiveness",
+  // «معرف‌ها و پورسانت» — strict too: profit and commission per referrer.
+  erp_referrer_commissions: "referrerCommissions",
   /*
    * «کارهای متوقف». Its own key, so denying the module on the users screen
    * actually closes the report rather than only hiding the menu item — the

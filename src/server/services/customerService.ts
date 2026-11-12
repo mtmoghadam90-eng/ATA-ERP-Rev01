@@ -1067,6 +1067,10 @@ export async function deleteCustomerWithMigration(fromId: string, toId: string) 
     await tx.project.updateMany({ where: { endUserCustomerId: fromId }, data: { endUserCustomerId: toId } });
     await tx.project.updateMany({ where: { financialContactId: fromId }, data: { financialContactId: toId } });
     await tx.project.updateMany({ where: { technicalContactId: fromId }, data: { technicalContactId: toId } });
+    // The jobs this contact brought, and what they were paid for them.
+    await tx.project.updateMany({ where: { referrerCustomerId: fromId }, data: { referrerCustomerId: toId } });
+    await tx.referralPayout.updateMany({ where: { referrerCustomerId: fromId }, data: { referrerCustomerId: toId } });
+    await tx.inboundMessage.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });
     await tx.proforma.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });
     await tx.proforma.updateMany({ where: { contactCustomerId: fromId }, data: { contactCustomerId: toId } });
     await tx.transaction.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });

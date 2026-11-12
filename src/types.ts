@@ -618,6 +618,11 @@ export interface Project {
   adCampaignLabel?: string;
   leadQuality?: string;             // کیفیت لید
   referrerName?: string;            // نام معرف
+  /** The contact who brought the job, from the customers list. */
+  referrerCustomerId?: string;
+  /** This project's own commission terms (see `utils/referralCommission.ts`); empty = the referrer's. */
+  commissionBasis?: string;
+  commissionRate?: number;
   financialContact?: string;        // فرد کلیدی مالی
   technicalContact?: string;        // فرد کلیدی فنی
   communicationMethod?: string;     // روش ارتباط
@@ -1342,6 +1347,8 @@ export interface User {
      * else only when it is ticked for them.
      */
     adEffectiveness?: boolean;
+    /** «معرف‌ها و پورسانت». Strict like `adEffectiveness`: absent denies. */
+    referrerCommissions?: boolean;
     /**
      * The assistant on the dashboard.
      *

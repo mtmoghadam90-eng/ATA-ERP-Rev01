@@ -44,7 +44,7 @@ import {
  * A sale's date is the day it was **approved**, not the day it was quoted —
  * see `saleDateOf`.
  */
-const SALE_SELECT = {
+export const SALE_SELECT = {
   id: true, customerId: true, status: true, isCancelled: true, currency: true,
   finalAmount: true, totalAmount: true,
   discountPercent: true, discountAmount: true, taxPercent: true, taxAmount: true,
@@ -65,7 +65,7 @@ const SALE_SELECT = {
   },
 } satisfies Prisma.ProformaSelect;
 
-type SaleRow = Prisma.ProformaGetPayload<{ select: typeof SALE_SELECT }>;
+export type SaleRow = Prisma.ProformaGetPayload<{ select: typeof SALE_SELECT }>;
 
 const money = (value: unknown): number => Number(value ?? 0);
 

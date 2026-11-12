@@ -34,6 +34,7 @@ import { addressForView, readUrlRequest } from './utils/appLinks';
 // stay in the entry chunk because every session draws them.
 const MessagingView = lazyView(() => import('./components/MessagingView'));
 const AdEffectivenessView = lazyView(() => import('./components/AdEffectivenessView'));
+const ReferrerCommissionsView = lazyView(() => import('./components/ReferrerCommissionsView'));
 const StuckWorkView = lazyView(() => import('./components/StuckWorkView'));
 const MeetingsView = lazyView(() => import('./components/MeetingsView'));
 const CustomersView = lazyView(() => import('./components/CustomersView'));
@@ -637,6 +638,8 @@ export default function App() {
         );
       case 'adEffectiveness':
         return <AdEffectivenessView settings={store.settings} />;
+      case 'referrerCommissions':
+        return <ReferrerCommissionsView />;
       case 'packagingDelivery':
         return (
           <PackagingDeliveryView
