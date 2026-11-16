@@ -1226,9 +1226,17 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
   Object.assign(data, laneTimestamps(before, data.status as string | undefined, todayJalali));
 
   const task = await db.$transaction(async (tx) => {
+    const current = await tx.task.findUniqueOrThrow({ where: { id } });
     const saved = await tx.task.update({
       where: { id }, data: data as Prisma.TaskUncheckedUpdateInput,
     });
+    if (current.status !== TASK_DONE && saved.status === TASK_DONE) {
+      await tx.taskWorkLog.create({ data: {
+        taskId: id, kind: "COMPLETION", text: saved.completionNote,
+        attachments: saved.completionAttachments,
+        authorUserId: user.id, authorName: user.fullName || "کاربر", createdAt: new Date(),
+      } });
+    }
     /*
       Moving a parked chase's date *is* moving the deferral. Inside the same
       transaction, or a failure here leaves the board on one date and the sales

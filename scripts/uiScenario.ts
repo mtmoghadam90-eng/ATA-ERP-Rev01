@@ -5561,6 +5561,69 @@ head("«معرف‌ها و پورسانت» draws each referrer and their projec
   gC.fetch = realFetchC;
 }
 
+head("Task work conversation: several reports before completion, with files and timestamps");
+{
+  const originalFetch = g.fetch;
+  const entries: any[] = [];
+  const writes: { path: string; body: any }[] = [];
+  let refuse = false;
+  g.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const path = String(url);
+    if (path.startsWith("/api/upload")) return { ok: true, status: 200, json: async () => ({ success: true, url: "/uploads/task-files/step.pdf" }) };
+    if (init?.method === "POST") {
+      const body = JSON.parse(init.body ?? "{}"); writes.push({ path, body });
+      if (refuse) return { ok: false, status: 400, json: async () => ({ success: false, error: "خطای ثبت آزمایشی" }) };
+      const row = { id: String(entries.length + 1), taskId: "work", kind: "PROGRESS", ...body, authorUserId: "me", authorName: "همکار", createdAt: "2026-11-16T08:30:00.000Z" };
+      entries.unshift(row);
+      return { ok: true, status: 201, json: async () => ({ success: true, row }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ success: true, rows: entries, hasMore: false }) };
+  }) as never;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  let completions = 0;
+  const draw = (status = "در حال انجام") => act(() => root.render(React.createElement(TaskCompletionModal, {
+    task: { id: "work", title: "وظیفهٔ چندمرحله‌ای", description: "مدارک مشتری را بررسی کن", status },
+    workLogEnabled: true, onUploadFile: async () => "/uploads/task-files/step.pdf", onCancel: () => {}, onConfirm: () => { completions++; },
+  })));
+  const settle = async () => { for (let i = 0; i < 15; i++) await act(async () => { await Promise.resolve(); }); };
+  const click = (id: string) => act(() => { host.querySelector<HTMLElement>(id)?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const type = (text: string) => act(() => { const box = host.querySelector<HTMLTextAreaElement>("#task-completion-note")!; box.value = text; handlers(box).onChange?.({ target: box }); });
+  draw(); await settle();
+  ok("opening the conversation writes nothing", writes.length === 0 && completions === 0);
+  ok("the task's instructions are shown", host.textContent!.includes("مدارک مشتری را بررسی کن"));
+  click("#task-progress-confirm"); await settle();
+  ok("empty progress is refused before a request", writes.length === 0);
+  type("مرحلهٔ اول انجام شد");
+  draw();
+  ok("a parent render preserves the draft", host.querySelector<HTMLTextAreaElement>("#task-completion-note")?.value === "مرحلهٔ اول انجام شد");
+  click("#task-progress-confirm"); await settle();
+  ok("progress uses its own endpoint", writes.length === 1 && writes[0].path === "/api/tasks/work/work-logs");
+  ok("...without completing or sending status", completions === 0 && !("status" in writes[0].body));
+  ok("the report appears in this task", host.querySelector('[data-work-log="1"]')?.textContent!.includes("مرحلهٔ اول انجام شد"));
+  ok("...with its author and Tehran time", host.querySelector('time')?.textContent === new Date(entries[0].createdAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) && host.textContent!.includes("همکار"));
+  type("مرحله دوم با فایل");
+  const picker = host.querySelector<HTMLInputElement>("#task-completion-files")!;
+  await act(async () => { const file = new File(["report"], "step.pdf", { type: "application/pdf" }); handlers(picker).onChange?.({ target: { files: [file], value: "" } }); });
+  await settle();
+  click("#task-progress-confirm"); await settle();
+  ok("a second report keeps the first", host.querySelectorAll('[data-work-log]').length === 2);
+  ok("the second report carries its own uploaded file", writes[1]?.body.attachments[0]?.url === "/uploads/task-files/step.pdf" && !!host.querySelector('[data-work-log="2"] a[href="/uploads/task-files/step.pdf"]'), JSON.stringify({ writes, text: host.textContent }));
+  type("گزارش ذخیره‌نشده"); refuse = true;
+  click("#task-progress-confirm"); await settle();
+  ok("a refused write keeps the draft and explains the error", host.querySelector<HTMLTextAreaElement>("#task-completion-note")?.value === "گزارش ذخیره‌نشده" && host.textContent!.includes("خطای ثبت آزمایشی"));
+  ok("completion stays a separate explicit action", completions === 0);
+  click("#task-completion-confirm");
+  ok("only the completion button completes", completions === 1);
+  act(() => root.unmount());
+  const closedRoot = createRoot(host);
+  await act(async () => { closedRoot.render(React.createElement(TaskCompletionModal, { task: { id: "work", title: "وظیفه", status: "انجام شده" }, workLogEnabled: true, onCancel: () => {}, onConfirm: () => { completions++; } })); });
+  await settle();
+  ok("completed tasks show their history", host.querySelectorAll('[data-work-log]').length === 2);
+  ok("...without a report or completion button", !host.querySelector("#task-progress-confirm") && !host.querySelector("#task-completion-confirm"));
+  act(() => closedRoot.unmount()); host.remove(); g.fetch = originalFetch;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

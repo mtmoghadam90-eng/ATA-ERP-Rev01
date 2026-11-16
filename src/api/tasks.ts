@@ -171,7 +171,22 @@ export interface TaskWriteInput {
   customValues?: unknown;
 }
 
+export interface TaskWorkLog {
+  id: string;
+  taskId: string;
+  kind: string;
+  text: string | null;
+  attachments: ActivityAttachment[];
+  authorUserId: string;
+  authorName: string;
+  createdAt: string;
+}
+
 export const tasksApi = {
+  workLogs: (id: string, page = 1, signal?: AbortSignal) =>
+    api.get<{ rows: TaskWorkLog[]; hasMore: boolean }>(`/api/tasks/${id}/work-logs`, { page }, signal),
+  addWorkLog: (id: string, text: string, attachments: ActivityAttachment[]) =>
+    api.post<{ row: TaskWorkLog }>(`/api/tasks/${id}/work-logs`, { text, attachments }).then((r) => r.row),
   list: (query: Record<string, string | number | boolean | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<TaskRow>>("/api/tasks", query, signal),
 

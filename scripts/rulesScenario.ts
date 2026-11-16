@@ -5984,7 +5984,7 @@ head("Sales follow-up: chasing a quotation");
      * date and the queue on another — precisely the state this closes.
      */
     ok("...called inside the write that moves the task",
-      /await db\.\$transaction\(async \(tx\) => \{[\s\S]{0,400}syncDeferralToChase\(tx, saved/
+      /await db\.\$transaction\(async \(tx\) => \{[\s\S]{0,1600}syncDeferralToChase\(tx, saved/
         .test(svc));
     ok("...and from the board's pull-forward as well",
       /lane === "DOING" && from === "WAITING"\) \{\s*await syncDeferralToChase\(/.test(svc));
@@ -15877,7 +15877,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     /summary\.revenue\.cancelledCount/.test(dashboard));
 }
 
-head("The board has no tick, so its headline is one");
+head("Both task headlines open the work conversation, never edit or reopen it");
 {
   const strip = (text: string) =>
     text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
@@ -15914,7 +15914,7 @@ head("The board has no tick, so its headline is one");
           CARD_TARGETS.filter((t) => t === target).length === 1, target);
         if (taskLane(status) === "DONE") {
           ok(`...and finished work is never completed again (${where})`,
-            target === "edit", target);
+            target === (taskKind === "SALES_FOLLOW_UP" ? "edit" : "complete"), target);
         }
       }
     }
@@ -15931,11 +15931,11 @@ head("The board has no tick, so its headline is one");
     cardPressTarget({ kind: "task", status: TASK_DONE, taskKind: "SALES_FOLLOW_UP" }, "complete"),
     "edit");
 
-  // And the whole point: one open ordinary task, two views, two answers.
+  // Both views now open the work conversation; neither completes on opening.
   for (const status of [TASK_TODO, TASK_DOING, "در انتظار"]) {
-    eq(`«${status}» opens the record from the list`,
-      cardPressTarget({ kind: "task", status, taskKind: "GENERAL" }, "open"), "edit");
-    eq(`«${status}» is ticked from the board`,
+    eq(`«${status}» opens the work conversation from the list`,
+      cardPressTarget({ kind: "task", status, taskKind: "GENERAL" }, "open"), "complete");
+    eq(`«${status}» opens the work conversation from the board`,
       cardPressTarget({ kind: "task", status, taskKind: "GENERAL" }, "complete"), "complete");
   }
 
@@ -15966,7 +15966,7 @@ head("The board has no tick, so its headline is one");
    */
   const open = view.slice(view.indexOf("const openCard"), view.indexOf("return (", view.indexOf("const openCard")));
   ok("the completion fills in the same state the tick does",
-    /setCompletingTask\(task\)/.test(open) && !/handleToggleComplete\(/.test(open));
+    /setCompletingTask\(/.test(open) && !/handleToggleComplete\(/.test(open));
 
   /*
    * Editing has to stay reachable from the board, or a date cannot be fixed on
@@ -24904,6 +24904,52 @@ head("«معرف‌ها و پورسانت»: who brought the job and what they a
   const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the project form picks the referrer from the contacts list", /data-project-referrer[\s\S]{0,1200}onSearchChange=\{referrerPicker\.setTerm\}/.test(pv)
     && /referrerCustomerId: referrerCustomerId \|\| undefined,/.test(pv));
+}
+
+head("Task work reports: append without closing, within the task's visibility");
+{
+  const { addTaskWorkLog, listTaskWorkLogs } = await import("../src/server/services/taskWorkLogService");
+  const user = { id: "worker", fullName: "همکار" };
+  const task = { id: "job", status: "در حال انجام", completionNote: "old", assignedToUserId: "worker", createdByUserId: "owner" };
+  const entries: any[] = [];
+  let visible = true;
+  let scoped: unknown;
+  let listed = 0;
+  const store = {
+    task: { findFirst: async ({ where }: any) => { scoped = where; return visible ? task : null; } },
+    taskWorkLog: {
+      create: async ({ data }: any) => { const row = { id: String(entries.length + 1), kind: "PROGRESS", ...data }; entries.push(row); return row; },
+      findMany: async ({ skip, take }: any) => { listed++; return [...entries].reverse().slice(skip, skip + take); },
+    },
+    $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(store),
+  };
+  const file = { name: "گزارش.pdf", size: "2 KB", url: "/uploads/task-files/report.pdf" };
+  await addTaskWorkLog("job", { text: "مرحله اول", attachments: [file] }, user, store as never);
+  await addTaskWorkLog("job", { text: "مرحله دوم" }, { id: "owner", fullName: "ارجاع‌دهنده" }, store as never);
+  eq("two stages are independent rows", entries.length, 2);
+  eq("progress leaves the task open", task.status, "در حال انجام");
+  eq("...and never overwrites the completion note", task.completionNote, "old");
+  eq("each stage carries its own author", entries.map((r) => r.authorUserId).join(","), "worker,owner");
+  ok("the time comes from the server", entries.every((r) => r.createdAt instanceof Date));
+  eq("files belong to their report", JSON.parse(entries[0].attachments)[0].url, file.url);
+  const page = await listTaskWorkLogs("job", user, 1, store as never);
+  eq("history returns both stages, newest first", page?.rows.map((r) => r.text).join(","), "مرحله دوم,مرحله اول");
+  eq("history decodes the files", page?.rows[1].attachments[0].name, file.name);
+  ok("the existing assignee/creator visibility is applied", JSON.stringify(scoped).includes("worker") && JSON.stringify(scoped).includes("createdByUserId"));
+  const rejects = async (body: unknown) => {
+    try { await addTaskWorkLog("job", body as never, user, store as never); return false; } catch { return true; }
+  };
+  ok("an empty report is refused", await rejects({ text: "  " }));
+  ok("external attachment URLs are refused", await rejects({ attachments: [{ ...file, url: "https://elsewhere/file" }] }));
+  ok("oversized text is refused", await rejects({ text: "a".repeat(20001) }));
+  task.status = "انجام شده";
+  ok("a closed task cannot receive a progress report", await rejects({ text: "late" }));
+  visible = false;
+  const readsBefore = listed;
+  eq("an unrelated user gets no history", await listTaskWorkLogs("job", user, 1, store as never), null);
+  eq("...without even querying its messages", listed, readsBefore);
+  eq("an unrelated user cannot post", await addTaskWorkLog("job", { text: "secret" }, user, store as never), null);
+  eq("refused writes leave all earlier reports intact", entries.length, 2);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

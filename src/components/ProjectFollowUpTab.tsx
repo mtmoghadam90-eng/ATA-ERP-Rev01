@@ -543,6 +543,7 @@ export default function ProjectFollowUpTab({
       {ticking && (
         <TaskCompletionModal
           task={ticking}
+          workLogEnabled
           onCancel={() => setTicking(null)}
           users={users}
           currentUserId={currentUser?.id}
