@@ -395,12 +395,11 @@ export default function TasksView({
   /*
    * The task being ticked off, while «شرح اقدام» is being answered.
    *
-   * Only an *open, ordinary* task gets here: a sales chase is closed by
-   * recording what the customer said (the server refuses the bare tick), and
-   * reopening a finished one says the work is not done, which is not something
-   * to describe.
+   * Ordinary tasks open their work conversation here. Closed tasks show the
+   * history read-only; sales follow-ups keep their specialised result form.
    */
   const [completingTask, setCompletingTask] = useState<Task | null>(null);
+  const [completingSaving, setCompletingSaving] = useState(false);
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [movingCards, setMovingCards] = useState(false);
 
@@ -848,8 +847,8 @@ export default function TasksView({
     note: string, contactResult?: string | null, extras?: TaskCompletionExtras,
   ) => {
     const task = completingTask;
-    if (!task) return;
-    setCompletingTask(null);
+    if (!task || completingSaving) return;
+    setCompletingSaving(true);
 
     /*
      * The completion first, «کار بعدی» after it — two requests, because the
@@ -865,6 +864,7 @@ export default function TasksView({
         ...(contactResult !== undefined ? { contactResult } : {}),
         completionAttachments: extras?.attachments ?? [],
       });
+      setCompletingTask(null);
       // «کار بعدی» only once the tick has landed — see `sendHandoff`.
       const handoffProblem = await sendHandoff(task.id, extras?.handoff);
       if (handoffProblem) alert(handoffProblem);
@@ -872,6 +872,8 @@ export default function TasksView({
       list.refresh();
     } catch (err) {
       reportError(err, 'ثبت انجام کار با خطا مواجه شد.');
+    } finally {
+      setCompletingSaving(false);
     }
   };
 
@@ -1095,21 +1097,7 @@ export default function TasksView({
     }
   };
 
-  /**
-   * Pressing a card's headline.
-   *
-   * The whole reason for the merge: a referral is answered in its own thread
-   * and a sales follow-up through its own completion form, both without
-   * leaving this screen.
-   *
-   * What an **ordinary task** does depends on where it was pressed, and
-   * `cardPressTarget` is the rule rather than a branch written out here: the
-   * list draws a tick beside every card so its headline opens the record,
-   * while the board has no per-card tick and its headline is the tick. A
-   * finished card is never completed by either — it opens the record, where
-   * the tick's own answer (reopening it) is a decision somebody makes rather
-   * than something a press does on the way past.
-   */
+  /** Both views open the task's work history; the pencil edits its fields. */
   const openCard = async (card: BoardCard, press: CardPress = 'open') => {
     const target = cardPressTarget(card, press);
     if (target === 'referral') {
@@ -1128,14 +1116,13 @@ export default function TasksView({
     }
     const task = tasks.find((t) => t.id === card.id);
     if (!task) return;
-    /*
-     * The same state the tick fills in, and deliberately not
-     * `handleToggleComplete`: that is the tick, and the tick reopens a card
-     * that is already done. The rule above has ruled that case out, so what is
-     * left here is one open task and one modal.
-     */
     if (target === 'complete') {
-      setCompletingTask(task);
+      try {
+        const fresh = rowToTask(await tasksApi.get(task.id));
+        setCompletingTask({ ...fresh, relatedProject: task.relatedProject });
+      } catch (err) {
+        reportError(err, 'دریافت وظیفه با خطا مواجه شد.');
+      }
       return;
     }
     handleOpenEdit(task);
@@ -1912,11 +1899,14 @@ export default function TasksView({
         it can settle are one implementation, not two.
       */}
       {/*
-        «شرح اقدام» as the task is ticked off — see TaskCompletionModal for why
-        it is asked on the tick and on nothing else.
+        The work conversation: append a report without closing, or finish the
+        task explicitly. Both list and board titles open this same form.
       */}
       <TaskCompletionModal
+        key={completingTask?.id}
         task={completingTask}
+        workLogEnabled
+        saving={completingSaving}
         contactResults={settings.dropdownItems?.contactResults}
         onCancel={() => setCompletingTask(null)}
         users={users}

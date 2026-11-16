@@ -14,6 +14,7 @@ import { topUpActiveWork } from "../services/workLoadService";
 import { contactResultReport } from "../services/contactResultService";
 import { createBulkCallTasks } from "../services/bulkCallTaskService";
 import { handoffFromTask, readHandoffRequest } from "../services/taskHandoffService";
+import { addTaskWorkLog, listTaskWorkLogs } from "../services/taskWorkLogService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
@@ -346,6 +347,26 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     } catch (err) {
       sendError(res, err, "POST /api/tasks/:id/handoff");
     }
+  });
+
+  app.get("/api/tasks/:id/work-logs", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const result = await listTaskWorkLogs(req.params.id, user, Number(req.query.page) || 1);
+      if (!result) { res.status(404).json({ success: false, error: "وظیفه یافت نشد." }); return; }
+      res.json({ success: true, ...result });
+    } catch (err) { sendError(res, err, "GET /api/tasks/:id/work-logs"); }
+  });
+
+  app.post("/api/tasks/:id/work-logs", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const row = await addTaskWorkLog(req.params.id, req.body ?? {}, user);
+      if (!row) { res.status(404).json({ success: false, error: "وظیفه یافت نشد." }); return; }
+      res.status(201).json({ success: true, row });
+    } catch (err) { sendError(res, err, "POST /api/tasks/:id/work-logs"); }
   });
 
   app.get("/api/tasks/:id", async (req, res) => {
