@@ -24952,6 +24952,60 @@ head("Task work reports: append without closing, within the task's visibility");
   eq("refused writes leave all earlier reports intact", entries.length, 2);
 }
 
+head("Customer industries: append to current settings without replacing other settings");
+{
+  const { appendIndustry } = await import("../src/utils/customerIndustries");
+  const { addCustomerIndustry } = await import("../src/server/services/customerIndustryService");
+  eq("a new industry is appended", appendIndustry(["نفت و گاز"], "  داروسازی  ").industries.join(","), "نفت و گاز,داروسازی");
+  eq("Persian and Arabic spellings do not duplicate an industry", appendIndustry(["نیروگاهی"], "نيروگاهي").industries.length, 1);
+  eq("the existing spelling stays selected", appendIndustry(["نیروگاهی"], "نيروگاهي").value, "نیروگاهی");
+  let invalid = false;
+  try { appendIndustry([], " "); } catch { invalid = true; }
+  ok("blank names are rejected", invalid);
+  let stored = { unrelated: { keep: true }, dropdownItems: { industries: ["نفت و گاز"], categories: ["ابزار دقیق"] } };
+  let isolation: unknown;
+  let attempts = 0;
+  const db = {
+    $transaction: async (fn: any, options: any) => {
+      isolation = options.isolationLevel;
+      if (attempts++ === 0) throw Object.assign(new Error("conflict"), { code: "P2034" });
+      return fn({ appSetting: {
+        findUnique: async () => ({ data: JSON.stringify(stored) }),
+        upsert: async ({ update }: any) => { stored = JSON.parse(update.data); },
+      } });
+    },
+  };
+  const result = await addCustomerIndustry("داروسازی", db as never);
+  eq("a concurrent write conflict is retried", attempts, 2);
+  eq("the append is serializable", isolation, "Serializable");
+  eq("the result selects the saved option", result.value, "داروسازی");
+  ok("other dropdowns and settings survive", stored.unrelated.keep && stored.dropdownItems.categories[0] === "ابزار دقیق");
+  await addCustomerIndustry("داروسازی", db as never);
+  eq("adding the same industry twice stores one option", stored.dropdownItems.industries.length, 2);
+}
+
+head("Activity notices: opt-in recipients are separate from referrals");
+{
+  const { activityNoticeRecipients } = await import("../src/utils/activityNotices");
+  eq("absent recipients mean no messages", activityNoticeRecipients(undefined, "author").length, 0);
+  eq("a malformed recipient field means no messages", activityNoticeRecipients("colleague", "author").length, 0);
+  eq("duplicates, the author and already-notified referrals are omitted", activityNoticeRecipients(["u1", "u1", "author", "mentioned", null, 12, "u2"], "author", ["mentioned"]).join(","), "u1,u2");
+  eq("a bounded batch is queued", activityNoticeRecipients(Array.from({ length: 100 }, (_, i) => `u${i}`), "author").length, 50);
+  eq("the new notice kind has its own wording", staffTemplateFor("ACTIVITY_NOTICE", {}).includes("جهت اطلاع"), true);
+}
+
+head("Many tag numbers survive the document chain without silent truncation");
+{
+  const { normalizeTagNumbers, MAX_TAG_NUMBERS_LENGTH } = await import("../src/utils/tagNumbers");
+  const tags = Array.from({ length: 80 }, (_, i) => `PIT-${1000 + i}`).join("\n");
+  eq("more than 100 characters stay intact", normalizeTagNumbers(tags), tags);
+  eq("Windows line endings keep the same list", normalizeTagNumbers(tags.replace(/\n/g, "\r\n")), tags);
+  eq("an empty tag list stays empty", normalizeTagNumbers("  "), null);
+  let refused = false;
+  try { normalizeTagNumbers("a".repeat(MAX_TAG_NUMBERS_LENGTH + 1)); } catch { refused = true; }
+  ok("a too-long list is refused, never cut off", refused);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

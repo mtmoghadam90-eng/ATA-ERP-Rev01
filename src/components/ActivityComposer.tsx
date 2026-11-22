@@ -22,6 +22,7 @@ import type { OpenReferralHit } from '../utils/openReferrals';
  */
 
 interface Props {
+  currentUserId?: string;
   /** Colleagues who can be named. The author is filtered out by the server. */
   users: MentionableUser[];
   /** The message being answered, if any. */
@@ -47,7 +48,7 @@ interface Props {
    */
   onSend: (
     text: string,
-    due: { dueDate: string; dueDateByAssignee: boolean; notifyReplyAuthor: boolean },
+    due: { dueDate: string; dueDateByAssignee: boolean; notifyReplyAuthor: boolean; notifyUserIds: string[] },
   ) => Promise<void>;
   /**
    * The open requests this writer has already raised, in this category, for
@@ -62,17 +63,19 @@ interface Props {
 export default function ActivityComposer({
   users, replyTo, onCancelReply, attachments, onAttachmentsChange,
   onPickFiles, uploading, onSend, openReferralsFor,
+  currentUserId,
 }: Props) {
   const [text, setText] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [dueByAssignee, setDueByAssignee] = useState(false);
   const [busy, setBusy] = useState(false);
   /*
-   * «اطلاع از طریق پیام‌رسان» for the author of the message being answered.
-   * Starts on, and is put back on after every send so the next reply does not
-   * inherit a «no» given to the last one.
+   * Explicit optional notices. Every message starts with the switch off and
+   * no recipients; choosing colleagues here creates no work referral.
    */
-  const [notifyReplyAuthor, setNotifyReplyAuthor] = useState(true);
+  const [notifyMessenger, setNotifyMessenger] = useState(false);
+  const [notifyUserIds, setNotifyUserIds] = useState<string[]>([]);
+  const [problem, setProblem] = useState('');
   /*
    * The open requests the writer was warned about, while the question stands.
    * Cleared by any edit of the text, because the names — and so the answer —
@@ -81,17 +84,10 @@ export default function ActivityComposer({
   const [duplicates, setDuplicates] = useState<OpenReferralHit[] | null>(null);
 
   const named = parseMentions(text, users);
-  /*
-   * The toggle only means something on a reply to a colleague, and stands
-   * down once the message names somebody: «@» raises a referral, and its own
-   * messenger text already reaches whoever was named.
-   */
-  const replyToggleShown = !!replyTo?.notifiable;
-  const replyToggleLocked = named.length > 0;
-  const willNotifyReplyAuthor = replyToggleShown && !replyToggleLocked && notifyReplyAuthor;
-
   const send = async (confirmed = false) => {
+    if (busy || uploading) return;
     if (!text.trim() && attachments.length === 0) return;
+    if (notifyMessenger && notifyUserIds.length === 0) { setProblem('همکاران دریافت‌کنندهٔ اطلاع را انتخاب کنید.'); return; }
     if (!confirmed && named.length > 0 && openReferralsFor) {
       const hits = openReferralsFor(named.map((u) => u.id));
       if (hits.length > 0) {
@@ -110,13 +106,16 @@ export default function ActivityComposer({
        * a date about nothing, and writing it would leave the next message
        * carrying a deadline nobody agreed.
        */
-      await onSend(text.trim(), named.length > 0
-        ? { dueDate, dueDateByAssignee: dueByAssignee, notifyReplyAuthor: false }
-        : { dueDate: '', dueDateByAssignee: false, notifyReplyAuthor: willNotifyReplyAuthor });
+      await onSend(text.trim(), {
+        dueDate: named.length > 0 ? dueDate : '', dueDateByAssignee: named.length > 0 && dueByAssignee,
+        notifyReplyAuthor: false, notifyUserIds: notifyMessenger ? notifyUserIds : [],
+      });
       setText('');
       setDueDate('');
       setDueByAssignee(false);
-      setNotifyReplyAuthor(true);
+      setNotifyMessenger(false); setNotifyUserIds([]); setProblem('');
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : 'ثبت پیام ممکن نشد.');
     } finally {
       setBusy(false);
     }
@@ -135,6 +134,7 @@ export default function ActivityComposer({
       className="space-y-2 bg-slate-50 p-3 rounded-xl border border-hairline border-t-2 border-t-edge"
       id="activity-composer"
     >
+      <fieldset disabled={busy} className="space-y-2 min-w-0">
       {/* What is being answered, so the reply is not written blind. */}
       {replyTo && (
         <div className="flex items-start gap-2 bg-white border-r-2 border-sky-400 rounded-lg px-2.5 py-1.5">
@@ -190,33 +190,19 @@ export default function ActivityComposer({
         />
       )}
 
-      {replyToggleShown && (
-        <label
-          data-reply-notify
-          className={`flex items-center gap-2 text-[11px] font-bold rounded-lg px-2.5 py-1.5 border ${
-            replyToggleLocked
-              ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
-              : 'bg-white border-slate-200 text-slate-600 cursor-pointer'
-          }`}
-          title={replyToggleLocked
-            ? 'پیام نام همکار را با @ دارد؛ ارجاع ثبت می‌شود و پیام‌رسان از همان راه ارسال می‌شود.'
-            : undefined}
-        >
-          <input
-            type="checkbox"
-            className="accent-sky-600"
-            checked={replyToggleLocked ? false : notifyReplyAuthor}
-            disabled={replyToggleLocked}
-            onChange={(e) => setNotifyReplyAuthor(e.target.checked)}
-            data-reply-notify-toggle
-          />
-          <BellRing size={12} className={replyToggleLocked ? 'text-slate-300' : 'text-sky-500'} />
-          <span>
-            اطلاع به {replyTo?.authorName || 'نویسندهٔ پیام'} از طریق پیام‌رسان
-            {replyToggleLocked && <span className="font-normal"> — با @ از راه ارجاع اطلاع داده می‌شود</span>}
-          </span>
+      <div className="space-y-2" data-activity-notify>
+        <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+          <input type="checkbox" data-activity-notify-toggle checked={notifyMessenger} disabled={busy} onChange={(e) => { setNotifyMessenger(e.target.checked); setProblem(''); }} />
+          <BellRing size={13} /> اطلاع از طریق پیام‌رسان
         </label>
-      )}
+        {notifyMessenger && <div className="border rounded-lg bg-white p-2 space-y-1 max-h-40 overflow-y-auto" aria-label="همکاران دریافت‌کننده اطلاع">
+          <p className="text-[11px] text-slate-500">این پیام برای اطلاع ارسال می‌شود و ارجاع کاری ایجاد نمی‌کند.</p>
+          {users.filter((u) => u.id !== currentUserId).map((u) => <label key={u.id} className="flex items-center gap-2 text-xs py-1">
+            <input type="checkbox" data-notify-user={u.id} disabled={busy} checked={notifyUserIds.includes(u.id)} onChange={(e) => setNotifyUserIds((prev) => e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id))} />{u.fullName}
+          </label>)}
+        </div>}
+        {problem && <p role="alert" className="text-xs text-red-700">{problem}</p>}
+      </div>
 
       {/*
         «قبلاً ارجاع باز داده‌ای؛ باز هم بفرستم؟» — asked in place rather than in
@@ -303,6 +289,7 @@ export default function ActivityComposer({
           {busy ? 'در حال ثبت…' : replyTo ? 'ارسال پاسخ' : 'ثبت پیام'}
         </button>
       </div>
+      </fieldset>
     </div>
   );
 }

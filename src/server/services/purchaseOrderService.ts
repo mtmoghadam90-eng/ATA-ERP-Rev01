@@ -1,3 +1,4 @@
+import { normalizeTagNumbers } from '../../utils/tagNumbers';
 import { Prisma } from "@prisma/client";
 import { COST_SOURCES } from "../../utils/costOfGoods";
 import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
@@ -372,7 +373,7 @@ function mapItem(row: PurchaseOrderItemInput): Record<string, unknown> | null {
     productName,
     productCode: toNullableString(row.productCode, 60),
     brand: toNullableString(row.brand, 150),
-    tagNumber: toNullableString(row.tagNumber, 100),
+    tagNumber: normalizeTagNumbers(row.tagNumber),
     quantity,
     unitPriceForeign: unitPrice,
     // Recomputed, like proforma lines: the client's arithmetic is not the source

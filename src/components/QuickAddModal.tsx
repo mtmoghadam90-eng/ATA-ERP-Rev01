@@ -3,14 +3,15 @@ import { X, Plus, Users, Briefcase, Truck, Package, Building, User, Trash2 } fro
 import { Customer, Project, Supplier, Product, ERPSettings, User as ERPUser } from '../types';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
-import { uploadFile } from '../imageUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
 import { getContactInfoError } from '../utils/customerValidation';
 import type { DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { SearchableSelect } from './SearchableSelect';
-import { customersApi } from '../api/customers';
+import { customersApi, type CustomerDetail, type CustomerWriteInput } from '../api/customers';
+import IndustrySelect from './IndustrySelect';
+import CustomerEditButton from './CustomerEditButton';
 import { RelationPicker } from './RelationPicker';
 import { detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { getTodayShamsi } from '../dateUtils';
@@ -32,6 +33,8 @@ interface QuickAddModalProps {
   users?: ERPUser[];
   initialCustType?: 'حقوقی' | 'حقیقی';
   initialLinkedCustomerIds?: string[];
+  initialCustomer?: Customer;
+  onCustomerSaved?: (row: CustomerDetail) => void;
 }
 
 export default function QuickAddModal({
@@ -39,7 +42,7 @@ export default function QuickAddModal({
   onClose,
   type,
   onSuccess,
-  customers = [],
+  customers: providedCustomers = [],
   products = [],
   settings,
   addCustomer,
@@ -48,9 +51,13 @@ export default function QuickAddModal({
   addProduct,
   users = [],
   initialCustType,
-  initialLinkedCustomerIds
+  initialLinkedCustomerIds,
+  initialCustomer,
+  onCustomerSaved,
 }: QuickAddModalProps) {
-  if (!isOpen) return null;
+
+  const [editedCustomers, setEditedCustomers] = useState<Record<string, Customer>>({});
+  const customers = providedCustomers.map((c) => editedCustomers[c.id] ?? c);
 
   // Unified Custom Fields state
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
@@ -85,6 +92,19 @@ export default function QuickAddModal({
   const [custTags, setCustTags] = useState('');
   const [custStatus, setCustStatus] = useState<'فعال' | 'غیرفعال'>('فعال');
   const [selectedLinks, setSelectedLinks] = useState<string[]>(initialLinkedCustomerIds || []);
+  const [customerSaving, setCustomerSaving] = useState(false);
+  const [customerError, setCustomerError] = useState('');
+  useEffect(() => {
+    if (!initialCustomer) return;
+    const c = initialCustomer;
+    setCustType(c.customerType); setCompanyName(c.companyName || '');
+    setFirstName(c.firstName || ''); setLastName(c.lastName || '');
+    setEconomicCode(c.economicCode || ''); setCustPhone(c.phone || ''); setCustMobile(c.mobile || '');
+    setCustEmail(c.email || ''); setIndustry(c.industry || ''); setKeyPerson(c.keyPerson || '');
+    setCustProvince(c.province || ''); setGender(c.gender || ''); setPosition(c.position || '');
+    setCustAddress(c.address || ''); setCustNotes(c.notes || ''); setCustTags(c.tags || '');
+    setCustStatus(c.status); setSelectedLinks(c.linkedCustomerIds || []); setCustomValues(c.customValues || {});
+  }, [initialCustomer?.id]);
 
   // ---------------------------------------------------------------------------
   // 2. PROJECT FORM STATES
@@ -215,7 +235,7 @@ export default function QuickAddModal({
   const getTitleAndIcon = () => {
     switch (type) {
       case 'customer':
-        return { title: 'تعریف سریع پرونده مشتری', icon: <Users className="text-sky-500" size={20} /> };
+        return { title: initialCustomer ? 'ویرایش پرونده مشتری' : 'تعریف سریع پرونده مشتری', icon: <Users className="text-sky-500" size={20} /> };
       case 'project':
         return { title: 'تعریف سریع پروژه / فرصت تجاری جدید', icon: <Briefcase className="text-emerald-500" size={20} /> };
       case 'supplier':
@@ -243,12 +263,26 @@ export default function QuickAddModal({
   // ---------------------------------------------------------------------------
   /** Actually creates the customer and closes the modal. */
   const commitCustomer = async (payload: Omit<Customer, 'id' | 'createdAt'>) => {
-    if (!addCustomer) return;
-    const newCust = await addCustomer(payload);
-    setDupMatches([]);
-    setDupPayload(null);
-    onSuccess(newCust);
-    onClose();
+    if (customerSaving || (!initialCustomer && !addCustomer)) return;
+    setCustomerSaving(true); setCustomerError('');
+    try {
+      let newCust: Customer | null;
+      if (initialCustomer) {
+        // Preserve every field this variant of the form does not display.
+        const fields: (keyof typeof payload)[] = ['customerType', 'companyName', 'phone', 'mobile', 'email', 'province', 'address', 'notes', 'tags', 'status',
+          ...(custType === 'حقوقی' ? ['economicCode', 'industry', 'keyPerson'] as const : ['firstName', 'lastName', 'gender', 'position'] as const)];
+        const input: Record<string, unknown> = {};
+        for (const key of fields) if (payload[key] !== initialCustomer[key]) input[key] = payload[key] ?? null;
+        if (JSON.stringify(payload.customValues) !== JSON.stringify(initialCustomer.customValues)) input.customValues = JSON.stringify(payload.customValues || {});
+        let row = Object.keys(input).length ? await customersApi.update(initialCustomer.id, input as Partial<CustomerWriteInput>) : await customersApi.get(initialCustomer.id);
+        if (JSON.stringify([...selectedLinks].sort()) !== JSON.stringify([...(initialCustomer.linkedCustomerIds || [])].sort())) row = await customersApi.setLinks(row.id, selectedLinks);
+        onCustomerSaved?.(row);
+        newCust = detailToCustomer(row);
+      } else newCust = await addCustomer!(payload);
+      if (!newCust) return;
+      setDupMatches([]); setDupPayload(null); onSuccess(newCust); onClose();
+    } catch (err) { setCustomerError(err instanceof Error ? err.message : 'ذخیره مشتری ممکن نشد.'); }
+    finally { setCustomerSaving(false); }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -267,7 +301,7 @@ export default function QuickAddModal({
     }
 
     if (type === 'customer') {
-      if (!addCustomer) return;
+      if (!addCustomer && !initialCustomer) return;
       if (custType === 'حقوقی') {
         if (isFieldRequired(settings, 'customers', 'companyName') && !companyName.trim()) {
           alert('لطفاً نام شرکت را وارد کنید.');
@@ -350,6 +384,7 @@ export default function QuickAddModal({
         customValues
       } as Omit<Customer, 'id' | 'createdAt'>;
 
+      if (initialCustomer) { await commitCustomer(payload); return; }
       // Warn before creating a record that looks like an existing customer.
       // Asked of the server: the picker holds a page, not the customer base.
       try {
@@ -522,6 +557,7 @@ export default function QuickAddModal({
     }
   };
 
+  if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" dir="rtl">
       <div className={`bg-white w-full ${getModalWidth()} rounded-2xl shadow-xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh] animate-scale-in`}>
@@ -540,8 +576,9 @@ export default function QuickAddModal({
           </button>
         </div>
 
+        {customerError && <p role="alert" className="text-xs text-red-700 px-6 py-2">{customerError}</p>}
         {/* Content Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto flex-1">
+        <form data-customer-edit={initialCustomer?.id} onSubmit={handleSubmit} className="p-6 space-y-6 overflow-y-auto flex-1">
           {/* -------------------- CUSTOMER FORM -------------------- */}
           {type === 'customer' && (
             <div className="space-y-5">
@@ -636,15 +673,7 @@ export default function QuickAddModal({
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'industry', 'صنعت / حوزه فعالیت')}</label>
-                      <select
-                        value={industry}
-                        onChange={(e) => setIndustry(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                      >
-                        {(settings.dropdownItems?.industries || ['نفت و گاز', 'پتروشیمی', 'نیروگاهی', 'فولاد و معادن', 'آب و فاضلاب', 'شیمیایی', 'سایر']).map((ind, i) => (
-                          <option key={i} value={ind}>{ind}</option>
-                        ))}
-                      </select>
+                      <IndustrySelect value={industry} onChange={setIndustry} options={settings.dropdownItems?.industries || ['نفت و گاز', 'پتروشیمی', 'نیروگاهی', 'فولاد و معادن', 'آب و فاضلاب', 'شیمیایی', 'سایر']} required={isFieldRequired(settings, 'customers', 'industry')} />
                     </div>
                     {/*
                       The form validated this and wrote it to the customer while
@@ -834,7 +863,7 @@ export default function QuickAddModal({
                   <label className="text-xs font-bold text-slate-700 block mb-1">
                     {custType === 'حقوقی' ? 'تعریف ارتباط با اشخاص حقیقی مرتبط' : 'تعریف ارتباط با شرکت‌های (حقوقی) مرتبط'}
                   </label>
-                  <RelationPicker
+                  <RelationPicker settings={settings}
                     customerType={custType}
                     selected={selectedLinks}
                     onToggle={(id) =>
@@ -892,7 +921,7 @@ export default function QuickAddModal({
                          ))}
                        </select>
                        {addCustomer && (
-                         <button
+                         <><button
                            type="button"
                            onClick={() => {
                              setNestedCustomerTarget('projCustomerId');
@@ -902,7 +931,7 @@ export default function QuickAddModal({
                            title="تعریف سریع مشتری جدید"
                          >
                            <Plus size={14} />
-                         </button>
+                         </button><CustomerEditButton customerId={projCustomerId} settings={settings} onSaved={(row) => setEditedCustomers((prev) => ({ ...prev, [row.id]: detailToCustomer(row) }))} /></>
                        )}
                      </div>
                    </div>
@@ -921,7 +950,7 @@ export default function QuickAddModal({
                          ))}
                        </select>
                        {addCustomer && (
-                         <button
+                         <><button
                            type="button"
                            onClick={() => {
                              setNestedCustomerTarget('projEndUser');
@@ -931,7 +960,7 @@ export default function QuickAddModal({
                            title="تعریف سریع مشتری جدید"
                          >
                            <Plus size={14} />
-                         </button>
+                         </button><CustomerEditButton customerId={projEndUser} settings={settings} onSaved={(row) => setEditedCustomers((prev) => ({ ...prev, [row.id]: detailToCustomer(row) }))} /></>
                        )}
                      </div>
                    </div>
@@ -1047,7 +1076,7 @@ export default function QuickAddModal({
                         })}
                       </select>
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setNestedCustomerTarget('projFinancialContact');
@@ -1057,7 +1086,7 @@ export default function QuickAddModal({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={14} />
-                        </button>
+                        </button><CustomerEditButton customerId={projFinancialContact} settings={settings} onSaved={(row) => setEditedCustomers((prev) => ({ ...prev, [row.id]: detailToCustomer(row) }))} /></>
                       )}
                     </div>
                   </div>
@@ -1080,7 +1109,7 @@ export default function QuickAddModal({
                         })}
                       </select>
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setNestedCustomerTarget('projTechnicalContact');
@@ -1090,7 +1119,7 @@ export default function QuickAddModal({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={14} />
-                        </button>
+                        </button><CustomerEditButton customerId={projTechnicalContact} settings={settings} onSaved={(row) => setEditedCustomers((prev) => ({ ...prev, [row.id]: detailToCustomer(row) }))} /></>
                       )}
                     </div>
                   </div>
@@ -1523,6 +1552,7 @@ export default function QuickAddModal({
                       if (files) {
                         for (const file of Array.from(files) as File[]) {
                           try {
+                            const { uploadFile } = await import('../imageUtils');
                             const url = await uploadFile(file);
                             setProdImages(prev => [...prev, url]);
                           } catch (err: any) {
@@ -1587,10 +1617,11 @@ export default function QuickAddModal({
             </button>
             <button
               type="submit"
+              disabled={customerSaving}
               className="px-4 py-2 text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 active:bg-sky-800 rounded-lg shadow-sm shadow-sky-600/10 flex items-center gap-1.5 transition"
             >
               <Plus size={14} />
-              ثبت و اضافه شدن خودکار
+              {initialCustomer ? 'ذخیره تغییرات مشتری' : 'ثبت و اضافه شدن خودکار'}
             </button>
           </div>
         </form>

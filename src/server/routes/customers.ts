@@ -1,4 +1,5 @@
 import express from "express";
+import { addCustomerIndustry } from '../services/customerIndustryService';
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { redactCustomerValue, redactCustomerValues, redactValueDetail, redactValueSummary } from "../costs";
@@ -70,6 +71,13 @@ function pickInput(body: unknown): Partial<CustomerInput> {
 
 export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): void {
   const KEY = "erp_customers";
+
+  app.post("/api/customers/industries", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try { res.status(201).json({ success: true, ...await addCustomerIndustry(req.body?.value) }); }
+    catch (err) { sendError(res, err, "POST /api/customers/industries"); }
+  });
 
   app.get("/api/customers", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");

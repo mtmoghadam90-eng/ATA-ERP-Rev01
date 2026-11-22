@@ -215,14 +215,14 @@ export default function WorkBoard({
           <div
             key={lane}
             id={`work-board-lane-${lane}`}
-            className={`rounded-2xl border overflow-hidden ${LANE_CLASS[lane]} flex flex-col min-h-[120px]`}
+            className={`rounded-2xl border overflow-hidden ${LANE_CLASS[lane]} flex flex-col min-h-[200px] h-[min(70dvh,760px)]`}
           >
             {/*
               The heading sits in a band of its own, closed by the column's own
               edge. The rule under it used to be `border-white/70` — white, on a
               surface that was itself 98% white.
             */}
-            <div className="board-lane-head flex items-center justify-between gap-2 px-3 py-2">
+            <div className="board-lane-head shrink-0 flex items-center justify-between gap-2 px-3 py-2">
               <div className="flex items-center gap-2">
                 {/* The column's identity before its name is read. */}
                 <span className="board-lane-mark w-1 h-4 rounded-full" aria-hidden="true" />
@@ -278,7 +278,7 @@ export default function WorkBoard({
               )}
             </div>
 
-            <div className="p-3 flex flex-col gap-2">
+            <div className="p-3 flex-1 min-h-0 overflow-y-auto overscroll-contain flex flex-col gap-2" tabIndex={0} role="region" aria-label={`فهرست ${LANE_LABELS[lane]}`} data-lane-scroll={lane}>
               {LANE_NOTE[lane] && (
                 <p className="text-[10px] leading-relaxed text-slate-600 pb-1">{LANE_NOTE[lane]}</p>
               )}

@@ -204,6 +204,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         replyToId: typeof body.replyToId === "string" ? body.replyToId : null,
         // Read strictly: absent is off, so an integration texts nobody it did not mean to.
         notifyReplyAuthor: body.notifyReplyAuthor === true,
+        notifyUserIds: Array.isArray(body.notifyUserIds) ? body.notifyUserIds.filter((id): id is string => typeof id === 'string') : [],
         referral: referral
           ? {
               assignedToUserId: typeof referral.assignedToUserId === "string" ? referral.assignedToUserId : null,

@@ -1,3 +1,4 @@
+import { normalizeTagNumbers } from '../../utils/tagNumbers';
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { normalizeAttachments, offerFileColumns } from "../../utils/attachments";
@@ -225,7 +226,7 @@ function mapItem(row: InquiryItemInput): Record<string, unknown> | null {
     name,
     brand: toNullableString(row.brand, 150),
     partNumber: toNullableString(row.partNumber, 150),
-    tagNumber: toNullableString(row.tagNumber, 100),
+    tagNumber: normalizeTagNumbers(row.tagNumber),
     quantity: toNumber(row.quantity, 1),
     currency: toNullableString(row.currency, 20) ?? "دلار",
     priceForeign: toNumber(row.priceForeign, 0),

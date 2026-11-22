@@ -267,7 +267,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
             bold: a chip already carrying a border and a fill does not also
             need weight, and bold monospace at 10px on paper closes up.
           -->${item.tagNumber ? `
-          <div style="margin-top: 5px; font-weight: normal;"><span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px; direction: ltr; unicode-bidi: isolate;">Tag: ${escapeHtml(item.tagNumber)}</span></div>` : ""}
+          <div style="margin-top: 5px; font-weight: normal;"><span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px; direction: ltr; unicode-bidi: isolate; white-space: pre-wrap; overflow-wrap: anywhere; display: inline-block; max-width: 100%;">Tag: ${escapeHtml(item.tagNumber)}</span></div>` : ""}
         </div>
         <!-- On one line on purpose: 'white-space: pre-line' keeps newlines, so
              a line break between the tag and the value printed a blank line

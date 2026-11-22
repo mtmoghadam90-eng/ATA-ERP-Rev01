@@ -1,3 +1,4 @@
+import { normalizeTagNumbers } from '../../utils/tagNumbers';
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { GROUP_CLOSED } from "../../utils/workBoard";
@@ -744,7 +745,7 @@ function mapItem(row: ProjectItemInput): Record<string, unknown> | null {
     category: toNullableString(row.category, 30),
     equipmentType: toNullableString(row.equipmentType, 200),
     size: toNullableString(row.size, 100),
-    tagNumber: toNullableString(row.tagNumber, 100),
+    tagNumber: normalizeTagNumbers(row.tagNumber),
   };
 }
 

@@ -1,3 +1,4 @@
+import CustomerEditButton from './CustomerEditButton';
 
 import { adCampaignsApi, type AdCampaignOption } from '../api/adCampaigns';
 import { itemCategoryFromText, projectItemCategory } from '../utils/productCategories';
@@ -4215,7 +4216,7 @@ export default function ProjectsView({
                       placeholder="-- انتخاب مشتری --"
                     />
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setQuickAddCustomerTarget('customerId');
@@ -4225,7 +4226,7 @@ export default function ProjectsView({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={customerId} settings={settings} onSaved={customerPicker.include} /></>
                       )}
                     </div>
                     <div className="mt-2">
@@ -4264,7 +4265,7 @@ export default function ProjectsView({
                       placeholder="-- انتخاب مصرف‌کننده (مشتری) --"
                     />
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setQuickAddCustomerTarget('endUser');
@@ -4274,7 +4275,7 @@ export default function ProjectsView({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={endUserId} settings={settings} onSaved={(row) => { endUserPicker.include(row); setEndUser(row.companyName); }} /></>
                       )}
                     </div>
                   </div>
@@ -4525,7 +4526,7 @@ export default function ProjectsView({
                         placeholder="-- جستجوی معرف در مخاطبین --"
                       />
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setQuickAddCustomerTarget('referrer');
@@ -4535,7 +4536,7 @@ export default function ProjectsView({
                           title="تعریف سریع معرف جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={referrerCustomerId} settings={settings} onSaved={(row) => { referrerPicker.include(row); setReferrerName(row.companyName); }} /></>
                       )}
                     </div>
                     {!referrerCustomerId && referrerName && (
@@ -4600,7 +4601,7 @@ export default function ProjectsView({
                         })}
                       </select>
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setQuickAddCustomerTarget('financialContact');
@@ -4610,7 +4611,7 @@ export default function ProjectsView({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={financialContactId} settings={settings} onSaved={(row) => { linkedContactsPicker.include(row); setFinancialContact(row.companyName); }} /></>
                       )}
                     </div>
                   </div>
@@ -4639,7 +4640,7 @@ export default function ProjectsView({
                         })}
                       </select>
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => {
                             setQuickAddCustomerTarget('technicalContact');
@@ -4649,7 +4650,7 @@ export default function ProjectsView({
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={technicalContactId} settings={settings} onSaved={(row) => { linkedContactsPicker.include(row); setTechnicalContact(row.companyName); }} /></>
                       )}
                     </div>
                   </div>
@@ -6536,6 +6537,7 @@ export default function ProjectsView({
                                     </span>
 
                                     <ActivityComposer
+                                      currentUserId={currentUser?.id}
                                       users={(users || []).map((u) => ({ id: u.id, fullName: u.fullName }))}
                                       replyTo={replyTo?.groupId === group.id ? replyTo : null}
                                       onCancelReply={() => setReplyTo(null)}
@@ -6567,6 +6569,7 @@ export default function ProjectsView({
                                             dueDate: due.dueDate || null,
                                             dueDateByAssignee: due.dueDateByAssignee,
                                             notifyReplyAuthor: due.notifyReplyAuthor,
+                                            notifyUserIds: due.notifyUserIds,
                                           });
                                           setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: [] }));
                                           setReplyTo(null);
@@ -6584,6 +6587,7 @@ export default function ProjectsView({
                                           // just wrote it.
                                         } catch (err) {
                                           reportActivityError(err, 'ثبت پیام با خطا مواجه شد.');
+                                          throw err;
                                         }
                                       }}
                                     />
