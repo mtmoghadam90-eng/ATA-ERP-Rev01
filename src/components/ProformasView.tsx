@@ -1,3 +1,5 @@
+import { MAX_TAG_NUMBERS_LENGTH } from '../utils/tagNumbers';
+import CustomerEditButton from './CustomerEditButton';
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
@@ -3984,7 +3986,7 @@ export default function ProformasView({
                           )}
                         </div>
                         {addCustomer && (
-                          <button
+                          <><button
                             type="button"
                             onClick={() => {
                               setIsQuickAddingSentRecipient(true);
@@ -3994,7 +3996,7 @@ export default function ProformasView({
                             title="تعریف سریع مخاطب حقیقی جدید"
                           >
                             <Plus size={14} />
-                          </button>
+                          </button>{(recipientPicker.matches as unknown as Customer[]).filter((c) => selectedSentRecipients.includes(recipientName(c))).map((c) => <CustomerEditButton key={c.id} customerId={c.id} name={recipientName(c)} settings={settings} onSaved={(row) => { recipientPicker.include(row); setSelectedSentRecipients((prev) => prev.map((n) => n === recipientName(c) ? recipientName(row as unknown as Customer) : n)); }} />)}</>
                         )}
                       </div>
                     </div>
@@ -4508,14 +4510,14 @@ export default function ProformasView({
                       placeholder="-- انتخاب مشتری --"
                     />
                     {addCustomer && (
-                      <button
+                      <><button
                         type="button"
                         onClick={() => setQuickAddType("customer")}
                         className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
                         title="تعریف سریع مشتری جدید"
                       >
                         <Plus size={18} />
-                      </button>
+                      </button><CustomerEditButton customerId={customerId} settings={settings} onSaved={customerPicker.include} /></>
                     )}
                   </div>
                   <div className="mt-2">
@@ -4614,7 +4616,7 @@ export default function ProformasView({
                             placeholder="-- انتخاب مخاطب --"
                           />
                           {addCustomer && (
-                            <button
+                            <><button
                               type="button"
                               onClick={() => {
                                 setIsQuickAddingContact(true);
@@ -4624,7 +4626,7 @@ export default function ProformasView({
                               title="تعریف سریع مخاطب حقیقی جدید"
                             >
                               <Plus size={18} />
-                            </button>
+                            </button><CustomerEditButton customerId={contactCustomerId} settings={settings} onSaved={contactPicker.include} /></>
                           )}
                         </div>
                       </div>
@@ -4874,7 +4876,7 @@ export default function ProformasView({
                           )}
                         </div>
                         {addCustomer && (
-                          <button
+                          <><button
                             type="button"
                             onClick={() => {
                               setIsQuickAddingSentRecipient(true);
@@ -4884,7 +4886,7 @@ export default function ProformasView({
                             title="تعریف سریع مخاطب حقیقی جدید"
                           >
                             <Plus size={14} />
-                          </button>
+                          </button>{(recipientPicker.matches as unknown as Customer[]).filter((c) => selectedSentRecipients.includes(recipientName(c))).map((c) => <CustomerEditButton key={c.id} customerId={c.id} name={recipientName(c)} settings={settings} onSaved={(row) => { recipientPicker.include(row); setSelectedSentRecipients((prev) => prev.map((n) => n === recipientName(c) ? recipientName(row as unknown as Customer) : n)); }} />)}</>
                         )}
                       </div>
                     </div>
@@ -5572,16 +5574,19 @@ export default function ProformasView({
                                 <label className="text-[10px] text-slate-500">
                                   تگ نامبر:
                                 </label>
-                                <input
-                                  type="text"
+                                <textarea
+                                  rows={3}
+                                  dir="ltr"
+                                  aria-label="تگ نامبرهای ردیف پیش‌فاکتور"
+                                  maxLength={MAX_TAG_NUMBERS_LENGTH}
                                   value={item.tagNumber || ""}
                                   onChange={(e) => {
                                     const newItems = [...items];
                                     newItems[idx].tagNumber = e.target.value;
                                     setItems(newItems);
                                   }}
-                                  placeholder="مثال: PIT-101"
-                                  className="border border-slate-200 rounded-md px-1.5 py-0.5 text-[10px] bg-white focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono text-center"
+                                  placeholder={"PIT-101\nPIT-102\nPIT-103"}
+                                  className="w-full min-w-[220px] min-h-[80px] resize-y border border-slate-200 rounded-md px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-sky-500 font-mono text-left leading-relaxed"
                                 />
                               </div>
                             </div>

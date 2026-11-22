@@ -1381,78 +1381,41 @@ head("Activity composer: an ordinary message asks about no deadline");
 }
 
 
-head("Activity composer: a reply to a colleague offers a messenger notice, on by default");
+head("Activity messenger notices: off by default, explicitly selected colleagues only");
 {
-  const settle = async () => {
-    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
-  };
-  const render = async (root: ReturnType<typeof createRoot>, replyTo: unknown,
-    sends: { text: string; notify: boolean }[]) => {
-    await act(async () => {
-      root.render(React.createElement(ActivityComposer, {
-        users: [{ id: "u1", fullName: "علی رضایی" }],
-        replyTo: replyTo as never,
-        onCancelReply: () => {},
-        attachments: [],
-        onAttachmentsChange: () => {},
-        onPickFiles: () => {},
-        uploading: false,
-        onSend: async (text: string, opts: { notifyReplyAuthor: boolean }) => {
-          sends.push({ text, notify: opts.notifyReplyAuthor });
-        },
-      }));
-    });
-    await settle();
-  };
   const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
   const root = createRoot(host);
-  const sends: { text: string; notify: boolean }[] = [];
-
-  await render(root, { id: "a1", text: "بار رسید", authorName: "مریم کاظمی", notifiable: false }, sends);
-  ok("no toggle on a reply to your own message or a system entry", !host.querySelector("[data-reply-notify]"));
-
-  await render(root, { id: "a1", text: "بار رسید", authorName: "مریم کاظمی", notifiable: true }, sends);
-  const toggle = () => host.querySelector("[data-reply-notify-toggle]") as HTMLInputElement;
-  ok("a reply to a colleague draws the toggle, naming them",
-    !!toggle() && (host.querySelector("[data-reply-notify]")?.textContent ?? "").includes("مریم کاظمی"));
-  ok("it starts on", toggle().checked && !toggle().disabled);
-
-  const box = host.querySelector("#activity-composer-text") as HTMLTextAreaElement;
-  const type = async (value: string) => {
-    await act(async () => {
-      box.value = value;
-      box.selectionStart = value.length;
-      box.selectionEnd = value.length;
-      handlers(box).onChange?.({ target: box, currentTarget: box });
-    });
-    await settle();
-  };
-  const pressSend = async () => {
-    const btn = host.querySelector("#activity-composer-send") as HTMLButtonElement;
-    await act(async () => { await (handlers(btn) as { onClick?: (e: unknown) => unknown }).onClick?.({}); });
-    await settle();
-  };
-
-  await type("ممنون، دیدم");
-  await pressSend();
-  ok("left on, the send asks for the notice", sends.at(-1)?.notify === true);
-
-  await type("باشه");
-  await act(async () => {
-    handlers(toggle()).onChange?.({ target: { checked: false }, currentTarget: { checked: false } });
-  });
-  await settle();
-  await pressSend();
-  ok("switched off, the send asks for none", sends.at(-1)?.notify === false);
-  ok("and it is back on for the next reply", toggle().checked);
-
-  await type("@علی رضایی لطفاً پیگیری کن");
-  ok("naming somebody with @ stands the toggle down", toggle().disabled && !toggle().checked);
-  await pressSend();
-  ok("and the send asks for no second notice", sends.at(-1)?.notify === false);
-
-  act(() => { root.unmount(); });
-  host.remove();
+  const sends: any[] = [];
+  let refuse = false;
+  const settle = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
+  const draw = () => act(() => root.render(React.createElement(ActivityComposer, {
+    currentUserId: "me", users: [{ id: "me", fullName: "خودم" }, { id: "u1", fullName: "علی رضایی" }, { id: "u2", fullName: "مریم کاظمی" }],
+    replyTo: null, onCancelReply: () => {}, attachments: [], onAttachmentsChange: () => {}, onPickFiles: () => {}, uploading: false,
+    onSend: async (text, opts) => { if (refuse) throw new Error("ثبت نشد"); sends.push({ text, ...opts }); },
+  })));
+  const change = (selector: string, target: any) => act(() => { handlers(host.querySelector(selector)!).onChange?.({ target, currentTarget: target }); });
+  const type = (value: string) => change("#activity-composer-text", { value, selectionStart: value.length, selectionEnd: value.length });
+  const send = async () => { await act(async () => { host.querySelector<HTMLElement>("#activity-composer-send")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); }); await settle(); };
+  draw(); await settle();
+  const toggle = () => host.querySelector<HTMLInputElement>("[data-activity-notify-toggle]")!;
+  ok("every activity offers the switch, initially off", !!toggle() && !toggle().checked);
+  type("خبر معمولی"); await send();
+  ok("an ordinary activity sends no notice", sends.length === 1 && sends[0].notifyUserIds.length === 0 && sends[0].notifyReplyAuthor === false);
+  type("مدارک آماده شد"); change("[data-activity-notify-toggle]", { checked: true });
+  ok("the sender is not a recipient choice", !host.querySelector('[data-notify-user="me"]'));
+  await send();
+  ok("enabled with nobody chosen asks before sending", sends.length === 1 && host.textContent!.includes("همکاران"));
+  change('[data-notify-user="u1"]', { checked: true }); change('[data-notify-user="u2"]', { checked: true });
+  draw(); await settle();
+  ok("parent renders preserve the text and choices", host.querySelector<HTMLTextAreaElement>("#activity-composer-text")?.value === "مدارک آماده شد" && host.querySelector<HTMLInputElement>('[data-notify-user="u2"]')?.checked);
+  refuse = true; await send();
+  ok("a failed save keeps the draft and recipients", toggle().checked && host.querySelector<HTMLTextAreaElement>("#activity-composer-text")?.value === "مدارک آماده شد" && host.textContent!.includes("ثبت نشد"));
+  refuse = false; await send();
+  ok("only chosen colleagues travel with the message", sends.at(-1)?.notifyUserIds.join(",") === "u1,u2");
+  ok("the next message starts off with no recipients", !toggle().checked && !host.querySelector("[data-notify-user]"));
+  type("@علی رضایی بررسی کن"); change("[data-activity-notify-toggle]", { checked: true }); change('[data-notify-user="u2"]', { checked: true }); await send();
+  ok("notice recipients stay separate from the @ referral", sends.at(-1)?.notifyUserIds.join(",") === "u2" && sends.at(-1)?.text.includes("@علی"));
+  act(() => root.unmount()); host.remove();
 }
 
 
@@ -5622,6 +5585,84 @@ head("Task work conversation: several reports before completion, with files and 
   ok("completed tasks show their history", host.querySelectorAll('[data-work-log]').length === 2);
   ok("...without a report or completion button", !host.querySelector("#task-progress-confirm") && !host.querySelector("#task-completion-confirm"));
   act(() => closedRoot.unmount()); host.remove(); g.fetch = originalFetch;
+}
+
+head("Add an industry inside a customer form without submitting that form");
+{
+  const { default: IndustrySelect } = await import("../src/components/IndustrySelect");
+  const original = g.fetch;
+  const sent: any[] = [];
+  let refuse = false;
+  g.fetch = (async (url: string, init?: { body?: string }) => {
+    sent.push({ url: String(url), body: JSON.parse(init?.body || "{}") });
+    return { ok: !refuse, status: refuse ? 403 : 201, json: async () => refuse ? { success: false, error: "اجازه ثبت ندارید" } : { success: true, industries: ["نفت و گاز", "داروسازی"], value: "داروسازی" } };
+  }) as never;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  let submits = 0;
+  function Host() {
+    const [industry, setIndustry] = useState("نفت و گاز");
+    return React.createElement("form", { onSubmit: (e: any) => { e.preventDefault(); submits++; } }, React.createElement(IndustrySelect, { value: industry, onChange: setIndustry, options: ["نفت و گاز"] }));
+  }
+  act(() => root.render(React.createElement(Host)));
+  const click = (selector: string) => act(() => { host.querySelector<HTMLElement>(selector)!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  click('[title="افزودن صنعت جدید"]');
+  const box = host.querySelector<HTMLInputElement>('[aria-label="نام صنعت جدید"]')!;
+  act(() => { box.value = "داروسازی"; handlers(box).onChange?.({ target: box }); });
+  refuse = true;
+  await act(async () => { host.querySelectorAll<HTMLButtonElement>("button")[1].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("a refused industry addition keeps the draft and explains why", box.value === "داروسازی" && host.textContent!.includes("اجازه ثبت ندارید"));
+  refuse = false;
+  await act(async () => { host.querySelectorAll<HTMLButtonElement>("button")[1].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("the new industry is immediately selected", host.querySelector("select")?.value === "داروسازی");
+  ok("...and saved through the narrow industry endpoint", sent.at(-1)?.url === "/api/customers/industries" && sent.at(-1)?.body.value === "داروسازی");
+  ok("adding an industry never submits the customer", submits === 0);
+  act(() => root.unmount()); host.remove(); g.fetch = original;
+}
+
+head("Inline customer editing reads the full record and preserves its parent form");
+{
+  await import("../src/components/QuickAddModal");
+  const { default: CustomerEditButton } = await import("../src/components/CustomerEditButton");
+  const original = g.fetch;
+  let record: any = { id: "edit-c1", customerType: "حقوقی", companyName: "شرکت قبلی", status: "فعال", phone: "02112345678", mobile: null, email: "old@example.com", province: "تهران", industry: "نفت و گاز", address: "آدرس کامل", notes: "توضیحات محفوظ", customValues: "{}", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", linksFrom: [], agreements: [{ id: "agreement", moduleName: "projects", text: "توافق مهم", createdBy: null, createdAt: "" }], doNotContact: true, city: "شهر محفوظ", customerLevel: "A" };
+  const calls: { path: string; method: string; body: any }[] = [];
+  let refuse = true;
+  g.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const path = String(url), method = init?.method || "GET";
+    const body = JSON.parse(init?.body || "{}"); calls.push({ path, method, body });
+    if (method === "PUT") {
+      if (refuse) return { ok: false, status: 400, json: async () => ({ success: false, error: "ذخیره آزمایشی ناموفق" }) };
+      record = { ...record, ...body };
+    }
+    return { ok: true, status: 200, json: async () => path === "/api/customers/edit-c1" ? { success: true, customer: record } : { success: true, rows: [], total: 0, totalPages: 1, page: 1, pageSize: 25 } };
+  }) as never;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  let parentSubmits = 0, saved = "";
+  act(() => root.render(React.createElement("form", { onSubmit: (e: any) => { e.preventDefault(); parentSubmits++; } },
+    React.createElement("input", { id: "parent-project-title", defaultValue: "عنوان ذخیره‌نشده پروژه" }),
+    React.createElement(CustomerEditButton, { customerId: "edit-c1", settings: DEFAULT_SETTINGS, onSaved: (row) => { saved = row.companyName; } }))));
+  await act(async () => { host.querySelector<HTMLElement>("[data-edit-customer]")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const settle = async () => { for (let i = 0; i < 20; i++) await act(async () => { await Promise.resolve(); }); };
+  await settle();
+  const form = () => dom.window.document.querySelector<HTMLFormElement>('[data-customer-edit="edit-c1"]');
+  ok("the edit action reads the customer's full detail", calls.some((c) => c.path === "/api/customers/edit-c1" && c.method === "GET") && !!form());
+  const name = Array.from(form()!.querySelectorAll<HTMLInputElement>("input")).find((input) => input.value === "شرکت قبلی")!;
+  ok("the existing name is seeded", !!name);
+  act(() => { name.value = "شرکت اصلاح‌شده"; handlers(name).onChange?.({ target: name }); });
+  await act(async () => { form()!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  ok("a failed save leaves the editor and draft open", !!form() && name.value === "شرکت اصلاح‌شده" && dom.window.document.body.textContent!.includes("ذخیره آزمایشی ناموفق"));
+  refuse = false;
+  await act(async () => { form()!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  const write = calls.filter((c) => c.method === "PUT").at(-1);
+  ok("editing updates the same customer instead of creating another", write?.path === "/api/customers/edit-c1" && !calls.some((c) => c.method === "POST"));
+  ok("fields absent from this form never round-trip", !!write && !["city", "doNotContact", "agreements", "customerLevel", "customerValueRank", "gender", "firstName", "position"].some((key) => key in write.body));
+  ok("the edited record is handed back to the picker", saved === "شرکت اصلاح‌شده" && !form());
+  ok("the surrounding project stays open with its unsaved text", parentSubmits === 0 && host.querySelector<HTMLInputElement>("#parent-project-title")?.value === "عنوان ذخیره‌نشده پروژه");
+  act(() => root.unmount()); host.remove(); g.fetch = original;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

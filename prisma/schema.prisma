@@ -741,11 +741,10 @@ model ProjectItem {
   category      String? @db.NVarChar(30)
   equipmentType String? @db.NVarChar(200)
   size          String? @db.NVarChar(100)
-  tagNumber     String? @db.NVarChar(100)
+  tagNumber     String? @db.NVarChar(Max)
 
   @@index([projectId])
   @@index([productId])
-  @@index([tagNumber])
   @@map("project_items")
 }
 
@@ -900,7 +899,7 @@ model ProformaItem {
   productName String  @db.NVarChar(400)
   productCode String? @db.NVarChar(60)
   brand       String? @db.NVarChar(150)
-  tagNumber   String? @db.NVarChar(100)
+  tagNumber   String? @db.NVarChar(Max)
 
   quantity       Decimal @default(1) @db.Decimal(18, 3)
   /// عدد | دستگاه | متر | … — from settings.dropdownItems.units, per line.
@@ -986,7 +985,6 @@ model ProformaItem {
   @@index([proformaId])
   @@index([productId])
   @@index([status])
-  @@index([tagNumber])
   @@map("proforma_items")
 }
 
@@ -1080,7 +1078,7 @@ model PurchaseOrderItem {
   productName String  @db.NVarChar(400)
   productCode String? @db.NVarChar(60)
   brand       String? @db.NVarChar(150)
-  tagNumber   String? @db.NVarChar(100)
+  tagNumber   String? @db.NVarChar(Max)
 
   quantity          Decimal @default(1) @db.Decimal(18, 3)
   unitPriceForeign  Decimal @default(0) @db.Decimal(19, 4)
@@ -1241,7 +1239,7 @@ model SupplierInquiryItem {
   name         String  @db.NVarChar(400)
   brand        String? @db.NVarChar(150)
   partNumber   String? @db.NVarChar(150)
-  tagNumber    String? @db.NVarChar(100)
+  tagNumber    String? @db.NVarChar(Max)
   quantity     Decimal @default(1) @db.Decimal(18, 3)
   currency     String  @default("دلار") @db.NVarChar(20)
   priceForeign Decimal @default(0) @db.Decimal(19, 4)
@@ -1338,7 +1336,7 @@ model PackingItem {
   /// not a relation: a packing list is a historical document and must survive
   /// the SKU being retired. The stock ledger reads it to issue the right one.
   variantId     String? @db.NVarChar(36)
-  tagNumber     String? @db.NVarChar(100)
+  tagNumber     String? @db.NVarChar(Max)
   /// The item's technical specification as printed on this packing list:
   /// seeded from the won proforma line and edited per list (lines removed).
   techSpecs     String? @db.NVarChar(Max)

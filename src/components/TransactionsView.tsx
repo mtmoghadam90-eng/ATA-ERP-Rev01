@@ -1,3 +1,4 @@
+import CustomerEditButton from './CustomerEditButton';
 import React, { useState, useEffect } from 'react';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
@@ -1957,14 +1958,14 @@ export default function TransactionsView({
                       placeholder="-- انتخاب مشتری --"
                     />
                       {addCustomer && (
-                        <button
+                        <><button
                           type="button"
                           onClick={() => setQuickAddType('customer')}
                           className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
                           title="تعریف سریع مشتری جدید"
                         >
                           <Plus size={18} />
-                        </button>
+                        </button><CustomerEditButton customerId={customerId} settings={settings} onSaved={customerPicker.include} /></>
                       )}
                     </div>
                   </div>

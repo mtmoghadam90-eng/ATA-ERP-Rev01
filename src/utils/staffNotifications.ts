@@ -49,13 +49,14 @@ import { FOLLOW_UP_KIND } from "./salesFollowUp";
  * when the reply names somebody with «@» — that raises a referral, whose own
  * `REFERRAL_RAISED` text already reaches whoever was named.
  */
-export const STAFF_NOTIFICATION_KINDS = ["TASK_ASSIGNED", "REFERRAL_RAISED", "ACTIVITY_REPLY"] as const;
+export const STAFF_NOTIFICATION_KINDS = ["TASK_ASSIGNED", "REFERRAL_RAISED", "ACTIVITY_REPLY", "ACTIVITY_NOTICE"] as const;
 export type StaffNotificationKind = (typeof STAFF_NOTIFICATION_KINDS)[number];
 
 export const STAFF_NOTIFICATION_LABELS: Record<StaffNotificationKind, string> = {
   TASK_ASSIGNED: "ارجاع وظیفه به همکار",
   REFERRAL_RAISED: "ارجاع کار در فید پروژه",
   ACTIVITY_REPLY: "پاسخ به پیام همکار در فید پروژه",
+  ACTIVITY_NOTICE: "اطلاع اختیاری از فعالیت پروژه",
 };
 
 /* ------------------------------- the wording ------------------------------ */
@@ -146,12 +147,14 @@ export const SUPERSEDED_STAFF_TEMPLATES: Record<StaffNotificationKind, string[]>
   ],
   // Born with the honorific; no earlier wording was ever written for it.
   ACTIVITY_REPLY: [],
+  ACTIVITY_NOTICE: [],
 };
 
 export const DEFAULT_STAFF_TEMPLATES: Record<StaffNotificationKind, string> = {
   TASK_ASSIGNED: "{assigneeAddressee} عزیز، {actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
   REFERRAL_RAISED: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
   ACTIVITY_REPLY: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} به پیام شما پاسخ داد: {title}",
+  ACTIVITY_NOTICE: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} جهت اطلاع شما نوشت: {title}",
 };
 
 /* -------------------------------- the rules ------------------------------- */

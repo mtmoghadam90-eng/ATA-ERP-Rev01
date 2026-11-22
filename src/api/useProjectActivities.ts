@@ -53,6 +53,7 @@ export interface AddActivityInput extends ActivityAttachmentInput {
   dueDateByAssignee?: boolean;
   /** Text the answered message's author on their messenger (the composer's toggle). */
   notifyReplyAuthor?: boolean;
+  notifyUserIds?: string[];
 }
 
 export interface ProjectActivitiesApi {
@@ -239,6 +240,7 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
       ...(input.dueDate ? { dueDate: input.dueDate } : {}),
       ...(input.dueDateByAssignee ? { dueDateByAssignee: true } : {}),
       ...(input.notifyReplyAuthor ? { notifyReplyAuthor: true } : {}),
+      ...(input.notifyUserIds?.length ? { notifyUserIds: input.notifyUserIds } : {}),
     });
     refresh();
   }, [refresh]);

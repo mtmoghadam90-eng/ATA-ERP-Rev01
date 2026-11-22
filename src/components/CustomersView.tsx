@@ -1,3 +1,4 @@
+import IndustrySelect from './IndustrySelect';
 import React, { useState } from 'react';
 import { 
   Plus, 
@@ -1782,16 +1783,7 @@ export default function CustomersView({
                     {/* صنعت / حوزه فعالیت */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'industry', 'صنعت / حوزه فعالیت')}</label>
-                      <select
-                        value={industry}
-                        required={isFieldRequired(settings, 'customers', 'industry')}
-                        onChange={(e) => setIndustry(e.target.value)}
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                      >
-                        {(settings.dropdownItems?.industries || industries).map((ind, i) => (
-                          <option key={i} value={ind}>{ind}</option>
-                        ))}
-                      </select>
+                      <IndustrySelect value={industry} onChange={setIndustry} options={settings.dropdownItems?.industries || industries} required={isFieldRequired(settings, 'customers', 'industry')} />
                     </div>
 
                     {/* استان */}
@@ -2254,7 +2246,7 @@ export default function CustomersView({
                   copy had no search box at all. See `RelationPicker`, which
                   also carries the reason its results are allowed to scroll.
                 */}
-                <RelationPicker
+                <RelationPicker settings={settings}
                   customerType={customerType}
                   selected={selectedLinks}
                   onToggle={handleToggleLink}
@@ -2377,15 +2369,7 @@ export default function CustomersView({
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] font-semibold text-slate-500">صنعت / حوزه فعالیت</label>
-                            <select
-                              value={quickIndustry}
-                              onChange={(e) => setQuickIndustry(e.target.value)}
-                              className="w-full border border-slate-200 rounded-md px-2 py-1.5 text-xs bg-white text-right focus:outline-none focus:ring-1 focus:ring-sky-500"
-                            >
-                              {industries.map((ind, i) => (
-                                <option key={i} value={ind}>{ind}</option>
-                              ))}
-                            </select>
+                            <IndustrySelect value={quickIndustry} onChange={setQuickIndustry} options={settings.dropdownItems?.industries || industries} required={isFieldRequired(settings, 'customers', 'industry')} />
                           </div>
                           <div className="space-y-1">
                             <label className="text-[10px] font-semibold text-slate-500">شخص کلیدی</label>

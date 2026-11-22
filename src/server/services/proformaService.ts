@@ -1,3 +1,4 @@
+import { normalizeTagNumbers } from '../../utils/tagNumbers';
 import { DeviationEntry, deviationRefusal, normalizeDeviation } from "../../utils/deviations";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
@@ -538,7 +539,7 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
     productName,
     productCode: toNullableString(row.productCode, 60),
     brand: toNullableString(row.brand, 150),
-    tagNumber: toNullableString(row.tagNumber, 100),
+    tagNumber: normalizeTagNumbers(row.tagNumber),
     quantity,
     // The unit the line is counted in. Held on the line, not read from the
     // catalogue at print time: a document says what was quoted, and the

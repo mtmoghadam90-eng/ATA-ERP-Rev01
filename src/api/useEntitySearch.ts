@@ -143,7 +143,9 @@ export function useEntitySearch<T extends { id: string }>(
 
   const setTermStable = useCallback((value: string) => setTerm(value), []);
   const include = useCallback((row: T) => {
-    setPinned((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
+    setPinned((prev) => (prev.some((r) => r.id === row.id) ? prev.map((r) => r.id === row.id ? row : r) : [...prev, row]));
+    setMatches((prev) => prev.map((r) => r.id === row.id ? row : r));
+    setSelected((prev) => prev?.id === row.id ? row : prev);
   }, []);
 
   /**

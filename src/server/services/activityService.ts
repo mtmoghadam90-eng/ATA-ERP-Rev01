@@ -29,6 +29,7 @@ import { canDeleteNote, canEditNote, noteHasContent, noteSummary } from "../../u
 import { MoveOutcome } from "./taskService";
 import { capacityByUser } from "./workLoadService";
 import { notifyStaff } from "./staffNotifications";
+import { activityNoticeRecipients } from '../../utils/activityNotices';
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -397,6 +398,7 @@ export interface ActivityInput {
    * its own text already reaches whoever was named.
    */
   notifyReplyAuthor?: boolean;
+  notifyUserIds?: string[];
 }
 
 /**
@@ -852,6 +854,19 @@ export async function addActivity(
       projectName: null,
       entityType: "activity",
       entityId: String((result.activity as { id?: string } | null)?.id ?? replyToId),
+    }));
+  }
+
+  const alreadyNotified = mentioned.map((u) => u.id);
+  if (input.referral?.assignedToUserId) alreadyNotified.push(input.referral.assignedToUserId);
+  if (input.notifyReplyAuthor === true && replyAuthorUserId && mentioned.length === 0) alreadyNotified.push(replyAuthorUserId);
+  for (const recipientId of activityNoticeRecipients(input.notifyUserIds, user.id, alreadyNotified)) {
+    await afterCommit('activity selected messenger', () => notifyStaff({
+      kind: 'ACTIVITY_NOTICE', assigneeUserId: recipientId,
+      actorUserId: user.id, actorName: author?.fullName ?? null,
+      title: `${group.categoryName}: ${noticeExcerpt(text)}`, projectId: group.project.id,
+      projectCode: group.project.code ?? null, projectName: null,
+      entityType: 'activity', entityId: String((result.activity as { id?: string })?.id ?? ''),
     }));
   }
 

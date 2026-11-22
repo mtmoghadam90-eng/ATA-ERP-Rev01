@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ERPSettings, Proforma, User } from "./types";
 import { ApiError, setUnauthenticatedHandler } from "./api/client";
 import { settingsApi } from "./api/settings";
+import { useRevalidate } from './api/liveData';
 import { diffSettings, isEmptyDelta } from "./utils/settingsDelta";
 import { DEFAULT_SETTINGS } from "./seedData";
 
@@ -217,6 +218,9 @@ function mergeSettings(loaded: unknown): ERPSettings {
 export function useERPStore() {
   const [settings, setSettings] = useState<ERPSettings>(DEFAULT_SETTINGS);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  useRevalidate(['settings'], () => {
+    void settingsApi.load().then((loaded) => setSettings(mergeSettings(loaded))).catch(() => {});
+  }, { enabled: !!currentUser });
   const [userRole, setUserRole] = useState<"admin" | "user">(() => {
     const stored = localStorage.getItem("erp_simulated_role");
     return stored === "user" ? "user" : "admin";

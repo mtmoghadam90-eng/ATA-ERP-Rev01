@@ -1,3 +1,4 @@
+import { normalizeTagNumbers } from '../../utils/tagNumbers';
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -180,7 +181,7 @@ function mapPackingItem(row: PackingItemInput): Record<string, unknown> | null {
     productId: toNullableString(row.productId, 36),
     // Which SKU, when the product has variants. The ledger issues against it.
     variantId: toNullableString(row.variantId, 36),
-    tagNumber: toNullableString(row.tagNumber, 100),
+    tagNumber: normalizeTagNumbers(row.tagNumber),
     techSpecs: toNullableString(row.techSpecs),
     quantity: toNumber(row.quantity, 1),
     // Held on the line, like the proforma's: a packing list is a historical

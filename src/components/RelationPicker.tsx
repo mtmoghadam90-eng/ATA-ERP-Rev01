@@ -1,3 +1,4 @@
+import CustomerEditButton from './CustomerEditButton';
 import React from 'react';
 import { Search } from 'lucide-react';
 import { useEntitySearch } from '../api/useEntitySearch';
@@ -39,6 +40,7 @@ export const RELATION_ROW_PX = 46;
 export const RELATION_FETCH_LIMIT = 25;
 
 export interface RelationPickerProps {
+  settings?: import('../types').ERPSettings;
   /** The type of the record being edited; the query asks for the other one. */
   customerType: 'حقوقی' | 'حقیقی';
   /** Ids currently linked. */
@@ -73,6 +75,7 @@ export function RelationPicker({
   excludeId,
   enabled = true,
   trailing,
+  settings,
 }: RelationPickerProps) {
   const search = useEntitySearch<CustomerRow>({
     path: '/api/customers',
@@ -119,9 +122,10 @@ export function RelationPicker({
             candidates.map((row) => {
               const isChecked = selected.includes(row.id);
               return (
+                <div key={row.id} className="flex items-center gap-1">
                 <label
                   key={row.id}
-                  className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50/50 cursor-pointer text-xs select-none"
+                  className="flex-1 min-w-0 flex items-center gap-3 px-3 py-2 hover:bg-slate-50/50 cursor-pointer text-xs select-none"
                 >
                   <input
                     type="checkbox"
@@ -134,6 +138,8 @@ export function RelationPicker({
                     <p className="text-[10px] text-slate-400 truncate">{candidateMeta(row)}</p>
                   </div>
                 </label>
+                {settings && <CustomerEditButton customerId={row.id} name={candidateName(row)} settings={settings} onSaved={search.include} />}
+                </div>
               );
             })
           ) : (
