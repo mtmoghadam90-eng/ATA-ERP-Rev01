@@ -1,3 +1,4 @@
+import { SALE_SELECT, buildCostLookup, grossProfitOf, isSale } from '../customerValueService';
 import { getTodayShamsi } from "../../../dateUtils";
 import { getDb } from "../../db";
 import { AuthUser, canSeeCosts } from "../../auth";
@@ -184,7 +185,7 @@ export function assistantTools(): AssistantTool[] {
       definition: {
         name: "project_profit",
         description:
-          "سود ناخالص یک پروژه: درآمد ردیف‌های برنده منهای بهای تمام‌شده‌ی همان"
+          "سود ناخالص یک پروژه قبل از مالیات بر ارزش افزوده: درآمد ردیف‌های برنده منهای بهای تمام‌شده‌ی همان"
           + " ردیف‌ها، به ریال. فقط برای کاربری که اجازه دیدن ارقام مالی دارد.",
         parameters: object({ projectId: { type: "string" } }, ["projectId"]),
       },
@@ -194,69 +195,25 @@ export function assistantTools(): AssistantTool[] {
         }
         const db = getDb();
         const projectId = str(args.projectId);
-        const project = await db.project.findUnique({
-          where: { id: projectId },
-          select: { id: true, code: true, name: true },
-        });
+        const visibleProject = await getProject(projectId, ctx.user);
+        const project = visibleProject ? { id: visibleProject.id, code: visibleProject.code, name: visibleProject.name } : null;
         if (!project) return { error: "پروژه یافت نشد." };
 
-        /*
-         * Won lines only, and each line's own stored cost.
-         *
-         * The cost is a snapshot taken when the line was quoted — see
-         * `ProformaItem.unitCost`. Looking the product's cost up today would
-         * rewrite last year's profit every time a supplier changed a price.
-         */
-        const items = await db.proformaItem.findMany({
-          where: {
-            proforma: { projectId, isCancelled: false },
-            status: { in: ["برنده", "برنده (تایید شده)"] },
-          },
-          select: {
-            quantity: true, unitPriceRial: true, totalPriceRial: true,
-            unitCost: true, costSource: true, productName: true,
-            proforma: { select: { proformaNumber: true, currency: true, historicalExchangeRate: true } },
-          },
-        });
-
-        let revenue = 0;
-        let cost = 0;
-        let costedRevenue = 0;
-        const uncosted: string[] = [];
-
-        for (const item of items) {
-          const rate = Number(item.proforma?.historicalExchangeRate ?? 0) || 1;
-          const inRial = item.proforma?.currency && item.proforma.currency !== "ریال" ? rate : 1;
-          const lineRevenue = Number(item.totalPriceRial ?? 0) * inRial;
-          revenue += lineRevenue;
-
-          if (item.unitCost === null || item.unitCost === undefined) {
-            uncosted.push(item.productName);
-            continue;
-          }
-          cost += Number(item.unitCost) * Number(item.quantity) * inRial;
-          costedRevenue += lineRevenue;
-        }
-
-        const grossProfit = costedRevenue - cost;
+        // The same pre-VAT revenue, cost coverage and historical exchange-rate
+        // rules as customer ranking and referrer commissions.
+        const sales = await db.proforma.findMany({ where: { projectId, isCancelled: false }, select: SALE_SELECT });
+        const costs = await buildCostLookup(db, sales);
+        const figures = grossProfitOf(sales, costs);
         return {
-          project,
-          currency: "ریال",
-          wonLines: items.length,
-          revenueRial: Math.round(revenue),
-          costRial: Math.round(cost),
-          grossProfitRial: Math.round(grossProfit),
-          grossMarginPercent: costedRevenue > 0
-            ? Math.round((grossProfit / costedRevenue) * 1000) / 10 : null,
-          /*
-           * How much of the revenue could be costed at all. A line with no cost
-           * is left out of both sides rather than counted as pure margin, and
-           * this is what stops a suspiciously good margin from reading as good
-           * news when it is really missing data.
-           */
-          costCoveragePercent: revenue > 0
-            ? Math.round((costedRevenue / revenue) * 1000) / 10 : null,
-          uncostedLines: uncosted,
+          project, currency: "ریال", excludesVat: true,
+          wonLines: sales.filter(isSale).reduce((sum, sale) => sum + sale.items.filter((i) => i.status === "برنده").length, 0),
+          revenueRial: figures.revenueRial, costRial: figures.cogsRial,
+          grossProfitRial: figures.grossProfitRial,
+          grossMarginPercent: figures.costedRevenueRial > 0
+            ? Math.round((figures.grossProfitRial / figures.costedRevenueRial) * 1000) / 10 : null,
+          costCoveragePercent: figures.revenueRial > 0 ? figures.coveragePercent : null,
+          uncostedLines: figures.uncostedLines,
+          missingRateSales: figures.missingRateSales,
         };
       },
     },

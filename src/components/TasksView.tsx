@@ -1201,7 +1201,7 @@ export default function TasksView({
           onOpenNotification={onOpenNotification}
         />
       ) : mainTab === 'contacts' ? (
-        <ContactResultsReport />
+        <ContactResultsReport contactResults={settings.dropdownItems?.contactResults} />
       ) : (<>
 
       {/*

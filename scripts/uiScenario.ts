@@ -5665,6 +5665,65 @@ head("Inline customer editing reads the full record and preserves its parent for
   act(() => root.unmount()); host.remove(); g.fetch = original;
 }
 
+head("Correcting completed calls from the workboard report and task history");
+{
+  const { default: ContactResultsReport } = await import("../src/components/ContactResultsReport");
+  const { summarizeContactResults } = await import("../src/utils/contactResults");
+  const original = g.fetch;
+  const options = ["پاسخ نداد", "نیاز دارد"];
+  let current: string | null = "پاسخ نداد", refuse = true, reads = 0, completions = 0;
+  const writes: any[] = [], history: any[] = [];
+  g.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const path = String(url);
+    if (init?.method === "PUT") {
+      const body = JSON.parse(init.body || "{}"); writes.push({ path, body });
+      if (refuse) return { ok: false, status: 400, json: async () => ({ success: false, error: "اصلاح تماس ذخیره نشد" }) };
+      const previous = current; current = body.contactResult;
+      history.unshift({ id: String(history.length + 1), kind: "CONTACT_RESULT", text: `اصلاح نتیجه تماس از «${previous || "ثبت نشده"}» به «${current || "ثبت نشده"}»`, authorName: "همکار", createdAt: "2026-11-23T08:00:00Z", attachments: [] });
+      return { ok: true, status: 200, json: async () => ({ success: true, contactResult: current }) };
+    }
+    if (path.includes("/api/tasks/contact-results")) {
+      reads++;
+      const row = { id: "call-edit", title: "تماس با مشتری", customerId: "customer", customerName: "شرکت نمونه", assignedToName: "همکار", contactResult: current, completionNote: "شرح اقدام محفوظ", completedAtJalali: "1405/09/01" };
+      return { ok: true, status: 200, json: async () => ({ success: true, summary: summarizeContactResults([row], options), rows: [row], listedTotal: 1, truncated: false }) };
+    }
+    return { ok: true, status: 200, json: async () => path.includes("work-logs") ? { success: true, rows: history, hasMore: false } : { success: true, users: [], rows: [] } };
+  }) as never;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  const settle = async () => { for (let i = 0; i < 18; i++) await act(async () => { await Promise.resolve(); }); };
+  const click = async (selector: string) => { await act(async () => { host.querySelector<HTMLElement>(selector)!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); }); await settle(); };
+  const choose = (value: string) => act(() => { const select = host.querySelector<HTMLSelectElement>('[aria-label="اصلاح نتیجه تماس"]')!; select.value = value; handlers(select).onChange?.({ target: select }); });
+  const saveButton = () => Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent === "ذخیره نتیجه تماس")!;
+  const save = async () => { await act(async () => { saveButton().dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); }); await settle(); };
+  const draw = () => act(() => root.render(React.createElement(ContactResultsReport, { contactResults: options })));
+  draw(); await settle();
+  ok("completed contact rows offer an edit action", !!host.querySelector('[title="ویرایش نتیجه تماس"]') && writes.length === 0);
+  await click('[title="ویرایش نتیجه تماس"]');
+  ok("the editor starts on the recorded result", host.querySelector<HTMLSelectElement>('[aria-label="اصلاح نتیجه تماس"]')?.value === "پاسخ نداد");
+  choose("نیاز دارد"); draw(); await settle();
+  ok("a parent render does not reset the changed answer", host.querySelector<HTMLSelectElement>('[aria-label="اصلاح نتیجه تماس"]')?.value === "نیاز دارد");
+  await save();
+  ok("failed correction keeps the choice and shows the error", host.textContent!.includes("اصلاح تماس ذخیره نشد") && host.querySelector<HTMLSelectElement>('[aria-label="اصلاح نتیجه تماس"]')?.value === "نیاز دارد");
+  refuse = false; await save();
+  ok("correction uses its own endpoint with the original answer", writes.at(-1)?.path === "/api/tasks/call-edit/contact-result" && writes.at(-1)?.body.previousResult === "پاسخ نداد");
+  ok("no status, completion date, note or files are sent", Object.keys(writes.at(-1)!.body).sort().join(",") === "contactResult,previousResult");
+  ok("the report is re-read after correction", reads >= 2 && host.querySelector('[data-contact-result-editor]')?.textContent?.includes("نیاز دارد"));
+  ok("the report keeps the original completion date", host.querySelector('[data-contact-rows]')?.textContent?.includes("1405/09/01"));
+  act(() => root.unmount());
+  const modalRoot = createRoot(host);
+  await act(async () => modalRoot.render(React.createElement(TaskCompletionModal, {
+    task: { id: "call-edit", title: "تماس با مشتری", relatedToType: "customer", taskKind: "GENERAL", status: "انجام شده", completedAt: "1405/09/01", contactResult: current },
+    workLogEnabled: true, contactResults: options, onCancel: () => {}, onConfirm: () => { completions++; },
+  })));
+  await settle();
+  ok("the completed task's own form offers the same result correction", !!host.querySelector('[title="ویرایش نتیجه تماس"]'));
+  await click('[title="ویرایش نتیجه تماس"]'); choose(""); await save();
+  ok("the result can be cleared without reopening or completing again", current === null && completions === 0 && !host.querySelector("#task-completion-confirm") && !!host.querySelector("[data-task-closed]"));
+  ok("the correction appears in the task's history with time", host.querySelectorAll("[data-work-log]").length === 2 && host.querySelector('[data-work-log="2"]')?.textContent?.includes("ثبت نشده") && !!host.querySelector('[data-work-log="2"] time'));
+  act(() => modalRoot.unmount()); host.remove(); g.fetch = original;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

@@ -28,7 +28,7 @@ export interface AdCampaignFigures {
   leads: number | null;
   /** «تعداد فروش نهایی». */
   sales: number | null;
-  /** «درآمد حاصله» in rial. */
+  /** «درآمد حاصله» in rial, excluding VAT (as are direct costs). */
   revenue: number | null;
   /** Projects attributed to the campaign on the projects screen, and the won ones. */
   linkedProjects?: number;

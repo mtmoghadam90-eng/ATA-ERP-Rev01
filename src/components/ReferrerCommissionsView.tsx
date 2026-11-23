@@ -105,7 +105,7 @@ export default function ReferrerCommissionsView() {
         <div className="flex-1">
           <h2 className="text-lg font-bold text-slate-800">معرف‌ها و پورسانت</h2>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            پروژه‌هایی که هر معرف آورده، سود ناخالص هر کدام و پورسانت او. پورسانت به نسبت پولی که مشتری پرداخت کرده قابل پرداخت می‌شود.
+            پروژه‌هایی که هر معرف آورده، سود ناخالص قبل از ارزش افزودهٔ هر کدام و پورسانت او. پورسانت به نسبت پولی که مشتری پرداخت کرده قابل پرداخت می‌شود.
           </p>
         </div>
         <button type="button" onClick={() => { void exportExcel(); }} disabled={rows.length === 0}

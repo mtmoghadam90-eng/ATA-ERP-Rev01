@@ -303,7 +303,8 @@ export interface LineMargin {
 }
 
 /**
- * One line's margin, in the document's own currency.
+ * One line's pre-VAT margin, in the document's own currency. Unit selling
+ * prices and unit costs exclude VAT; tax is added only at document level.
  *
  * No exchange rate anywhere: cost and revenue are in the same currency by
  * construction, which is the point of storing cost that way. A document with no
