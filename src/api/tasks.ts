@@ -183,6 +183,8 @@ export interface TaskWorkLog {
 }
 
 export const tasksApi = {
+  correctContactResult: (id: string, contactResult: string | null, previousResult: string | null) =>
+    api.put<{ contactResult: string | null }>(`/api/tasks/${id}/contact-result`, { contactResult, previousResult }),
   workLogs: (id: string, page = 1, signal?: AbortSignal) =>
     api.get<{ rows: TaskWorkLog[]; hasMore: boolean }>(`/api/tasks/${id}/work-logs`, { page }, signal),
   addWorkLog: (id: string, text: string, attachments: ActivityAttachment[]) =>

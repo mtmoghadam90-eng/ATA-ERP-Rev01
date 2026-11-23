@@ -25006,6 +25006,95 @@ head("Many tag numbers survive the document chain without silent truncation");
   ok("a too-long list is refused, never cut off", refused);
 }
 
+head("Profit always excludes VAT while customer receivables retain it");
+{
+  const { getWonItemsPreTaxCurrencyAmount, getWonItemsCurrencyAmount } = await import("../src/utils/finance");
+  const { grossProfitOf, saleRevenueRial } = await import("../src/server/services/customerValueService");
+  const { commissionEarned } = await import("../src/utils/referralCommission");
+  const noFallback = { byProformaItem: new Map<string, number>(), standardUnitCost: new Map<string, number>() };
+  const line = (id: string, status = "برنده", total = 100, cost: number | null = 60) => ({ id, status, productId: null, variantId: null, productName: id, quantity: 1, unitPriceRial: total, totalPriceRial: total, unitCost: cost, costSource: cost === null ? null : "MANUAL", costCurrency: "ریال" });
+  const sale = (patch: any = {}) => ({ id: "quote", customerId: "customer", status: "ارسال شده", isCancelled: false, currency: "ریال", historicalExchangeRate: null, items: [line("a")], totalAmount: 100, discountPercent: 10, discountAmount: 10, taxPercent: 10, taxAmount: 9, extraCosts: 5, finalAmount: 104, issueDate: new Date("2026-11-01"), issueDateJalali: "1405/08/10", project: null, ...patch });
+  const client = (row: any): any => ({ ...row, items: row.items.map((i: any) => ({ ...i, unitPriceRIYAL: i.unitPriceRial, totalPriceRIYAL: i.totalPriceRial })) });
+  const taxed = sale();
+  eq("the sale's profit revenue is net of VAT", saleRevenueRial(taxed as never), 95);
+  eq("the customer still owes the tax", getWonItemsCurrencyAmount(client(taxed)), 104);
+  eq("the profit is after discount, before VAT", grossProfitOf([taxed] as never, noFallback).grossProfitRial, 35);
+  const partial = sale({ totalAmount: 200, items: [line("a"), line("b", "بازنده")], discountAmount: 20, taxAmount: 18, extraCosts: 10, finalAmount: 208 });
+  eq("partial wins allocate the pre-tax discount and extras", getWonItemsPreTaxCurrencyAmount(client(partial)), 95);
+  eq("partial wins still collect their own VAT share", getWonItemsCurrencyAmount(client(partial)), 104);
+  eq("partial-win profit excludes tax on both won and lost lines", grossProfitOf([partial] as never, noFallback).grossProfitRial, 35);
+  for (const row of [taxed, partial]) {
+    for (const taxPercent of [0, 1, 10, 25, 100]) {
+      const changed = { ...row, taxPercent, taxAmount: 12345, finalAmount: 987654 };
+      eq(`VAT alone cannot move profit (${row.items.length} lines, ${taxPercent}%)`, grossProfitOf([changed] as never, noFallback).grossProfitRial, 35);
+    }
+  }
+  const manual = sale({ discountPercent: 0, discountAmount: 10, taxPercent: 0, taxAmount: 17, finalAmount: 112 });
+  eq("a fixed VAT amount is excluded too", grossProfitOf([manual] as never, noFallback).grossProfitRial, 35);
+  const foreign = sale({ currency: "یورو", historicalExchangeRate: 50000 });
+  eq("a foreign profit uses the stored exchange rate", grossProfitOf([foreign] as never, noFallback).grossProfitRial, 1750000);
+  const unknownRate = grossProfitOf([sale({ currency: "یورو", historicalExchangeRate: null })] as never, noFallback);
+  eq("an unknown foreign rate never becomes one rial per euro", unknownRate.grossProfitRial, 0);
+  eq("...and the missing valuation is reported", unknownRate.missingRateSales, 1);
+  const partlyCosted = grossProfitOf([sale({ items: [line("known", "برنده", 50, 20), line("unknown", "برنده", 50, null)], discountPercent: 0, discountAmount: 0, extraCosts: 0, finalAmount: 110, taxAmount: 10 })] as never, noFallback);
+  eq("unknown costs are not treated as tax-free profit", partlyCosted.grossProfitRial, 30);
+  eq("cost coverage uses pre-tax revenue on both sides", partlyCosted.coveragePercent, 50);
+  eq("the missing cost's name remains visible", partlyCosted.uncostedLines.join(","), "unknown");
+  eq("cancellation still contributes no profit", grossProfitOf([sale({ isCancelled: true })] as never, noFallback).grossProfitRial, 0);
+  eq("profit commissions follow the pre-VAT figure", commissionEarned({ basis: "PROFIT_PERCENT", rate: 10, source: "PROJECT" }, { won: true, revenueRial: 95, grossProfitRial: 35 }), 4);
+}
+
+head("Previously cached profit metrics are refreshed once, only marked on success");
+{
+  const { refreshPreVatProfitMetricsOnce } = await import("../src/server/services/customerValueRecalc");
+  let marker: any = null, runs = 0;
+  const db = { appSetting: { findUnique: async () => marker, upsert: async ({ create }: any) => { marker = create; } } };
+  let failed = false;
+  try { await refreshPreVatProfitMetricsOnce(db as never, async () => { throw new Error("failed"); }); } catch { failed = true; }
+  ok("a failed refresh leaves no success marker", failed && marker === null);
+  await refreshPreVatProfitMetricsOnce(db as never, async () => { runs++; });
+  await refreshPreVatProfitMetricsOnce(db as never, async () => { runs++; });
+  eq("successful cached metrics are refreshed only once", runs, 1);
+  eq("the marker is separate from company settings", marker.id, "profit-pre-vat-v1");
+}
+
+head("Correct a contact result without completing, reopening or re-dating its task");
+{
+  const { correctContactResult } = await import("../src/server/services/contactResultCorrection");
+  const task: any = { id: "call", relatedToType: "customer", taskKind: "NEXT_ACTION", status: "انجام شده", contactResult: "پاسخ نداد", completedAtJalali: "1405/09/01", completionNote: "یادداشت محفوظ", completionAttachments: '[{"url":"/uploads/report.pdf"}]' };
+  const writes: any[] = [], logs: any[] = [];
+  let visible = true, where: unknown;
+  const db = { $transaction: async (fn: any) => fn({
+    task: { findFirst: async (args: any) => { where = args.where; return visible ? task : null; }, update: async ({ data }: any) => { writes.push(data); Object.assign(task, data); return task; } },
+    taskWorkLog: { create: async ({ data }: any) => { logs.push(data); return data; } },
+  }) };
+  const settings = async () => ({ dropdownItems: { contactResults: ["پاسخ نداد", "نیاز دارد"] } }) as never;
+  const user = { id: "owner", fullName: "همکار" };
+  const save = (value: string | null, previous: string | null) => correctContactResult("call", { contactResult: value, previousResult: previous }, user, db as never, settings);
+  await save("نیاز دارد", "پاسخ نداد");
+  eq("only the contact result is updated", Object.keys(writes[0]).join(","), "contactResult");
+  eq("the completion date is retained", task.completedAtJalali, "1405/09/01");
+  ok("the note, files and closed state are retained", task.completionNote === "یادداشت محفوظ" && task.completionAttachments.includes("report.pdf") && task.status === "انجام شده");
+  ok("history records old and new answers with the actor and time", logs[0].text.includes("پاسخ نداد") && logs[0].text.includes("نیاز دارد") && logs[0].authorUserId === "owner" && logs[0].createdAt instanceof Date);
+  ok("the ordinary task's visibility is applied", JSON.stringify(where).includes("createdByUserId"));
+  await save("نیاز دارد", "پاسخ نداد");
+  eq("a retried successful request creates no second correction", logs.length, 1);
+  let stale = false;
+  try { await save("پاسخ نداد", "old"); } catch { stale = true; }
+  ok("a stale editor cannot overwrite someone else's answer", stale && task.contactResult === "نیاز دارد");
+  let invalid = false;
+  try { await save("نتیجه ساختگی", "نیاز دارد"); } catch { invalid = true; }
+  ok("results outside the configured list are refused", invalid);
+  await save(null, "نیاز دارد");
+  eq("a result can be cleared back to unrecorded", task.contactResult, null);
+  visible = false;
+  eq("another user's call cannot be changed", await save("پاسخ نداد", null), null);
+  visible = true; task.taskKind = "SALES_FOLLOW_UP";
+  let chase = false;
+  try { await save("پاسخ نداد", null); } catch { chase = true; }
+  ok("sales follow-ups retain their specialised correction flow", chase);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

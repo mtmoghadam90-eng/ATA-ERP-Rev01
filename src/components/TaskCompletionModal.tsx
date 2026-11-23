@@ -12,6 +12,7 @@ import TaskWorkHistory from "./TaskWorkHistory";
 import { tasksApi } from "../api/tasks";
 import { TASK_DONE, TASK_CANCELLED } from "../utils/workBoard";
 import TaskFileLinks from "./TaskFileLinks";
+import ContactResultEditor from './ContactResultEditor';
 
 /**
  * The task's work conversation and explicit completion action. A work report
@@ -237,6 +238,7 @@ export default function TaskCompletionModal({
           {closed && (
             <div className="bg-slate-50 rounded-lg p-3 text-xs space-y-2" data-task-closed>
               <p className="font-bold">{task.status} {task.completedAt ?? ""}</p>
+              {task.status === TASK_DONE && takesContactResult(task) && <ContactResultEditor taskId={task.id} result={task.contactResult} options={contactResults ?? []} onSaved={() => setHistoryVersion((n) => n + 1)} />}
               {task.completionNote && <p className="whitespace-pre-wrap break-words">{task.completionNote}</p>}
               {task.completionAttachments?.map((file) => <a key={file.url} href={file.url} target="_blank" rel="noreferrer" className="block text-sky-700 hover:underline">{file.name}</a>)}
             </div>

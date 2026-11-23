@@ -64,7 +64,7 @@ import { ensureDueRemindersRanToday } from "./src/server/services/dueReminderSwe
 import { ensureHolidayYearNoticeRanToday } from "./src/server/services/holidayYearNotice";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
-import { recalculateCustomerValueNow } from "./src/server/services/customerValueRecalc";
+import { recalculateCustomerValueNow, refreshPreVatProfitMetricsOnce } from "./src/server/services/customerValueRecalc";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "./src/utils/uploadLimits";
 
@@ -769,6 +769,9 @@ registerCampaignRoutes(app, routeDeps);
     // After binding, so a slow or unreachable database delays the report rather
     // than the port.
     void reportSchemaState();
+    // One background refresh of cached profit/ranks after the VAT basis fix.
+    // The port and the deploy health check do not wait on a population scan.
+    void refreshPreVatProfitMetricsOnce().catch((err) => console.error('[profit] pre-VAT refresh failed:', err));
     /*
      * The official calendar, into this process's date helpers.
      *
@@ -899,9 +902,8 @@ registerCampaignRoutes(app, routeDeps);
     VALUE_TICK_MS,
   );
   valueTimer.unref?.();
-  // Not at startup: a deploy restart would otherwise run a full pass while the
-  // first users are signing in. The first tick is a day away, and any sale
-  // before then schedules one anyway.
+  // Routine restarts do not run a full pass. The one-time pre-VAT correction
+  // above is versioned separately; sales schedule later passes as usual.
 
   // Close the SQL Server pool on shutdown. A deploy restart kills this process
   // while connections are open; releasing them lets the new process bind them

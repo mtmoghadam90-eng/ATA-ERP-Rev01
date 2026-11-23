@@ -300,7 +300,7 @@ export default function PriceCalculatorModal({
           <div className="flex items-center gap-2">
             <Calculator className="text-sky-500" size={20} />
             <div>
-              <h3 className="font-bold text-slate-800 text-sm">{title}</h3>
+              <div><h3 className="font-bold text-slate-800 text-sm">{title}</h3><p className="mt-1 text-[11px] text-slate-500">قیمت فروش و بهای تمام‌شده را بدون مالیات بر ارزش افزوده وارد کنید.</p></div>
               {subtitle && (
                 <p className="text-[10px] text-slate-500">{subtitle}</p>
               )}

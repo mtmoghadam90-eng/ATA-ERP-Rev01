@@ -372,7 +372,7 @@ export default function CustomerValueCard({
                 <Figure label="فروش کل (ریال)" value={formatMoney(raw.salesRevenueRial)} />
                 {showCosts && (
                   <>
-                    <Figure label="سود ناخالص (ریال)" value={formatMoney(raw.grossProfitRial)} />
+                    <Figure label="سود ناخالص قبل از ارزش افزوده (ریال)" value={formatMoney(raw.grossProfitRial)} />
                     <Figure
                       label="حاشیه سود ناخالص"
                       value={raw.grossMarginPercent === null ? '—' : `${raw.grossMarginPercent}٪`}

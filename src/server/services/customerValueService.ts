@@ -3,7 +3,7 @@ import { getDb } from "../db";
 import { loadSettings } from "../settings";
 import { dateToJalali } from "../dates";
 import { getProformaOutcome } from "../proformaStatus";
-import { getWonItemsCurrencyAmount } from "../../utils/finance";
+import { getWonItemsPreTaxCurrencyAmount } from "../../utils/finance";
 import { landedUnitCostOf, parseCalcFields } from "../../utils/costOfGoods";
 import {
   CustomerRank, CustomerValueSettings, PotentialInputs,
@@ -120,9 +120,9 @@ export function isSale(row: SaleRow): boolean {
   return outcome === "تأیید شده (برنده)" || outcome === "نیمه برنده";
 }
 
-/** Revenue of one sale in rial, at the rate stored on the document itself. */
+/** Pre-VAT revenue, at the rate stored on the document itself. */
 export function saleRevenueRial(row: SaleRow): number | null {
-  const inCurrency = getWonItemsCurrencyAmount(toFinanceShape(row));
+  const inCurrency = getWonItemsPreTaxCurrencyAmount(toFinanceShape(row));
   const isRial = !row.currency || row.currency === "ریال";
   if (isRial) return inCurrency;
 
@@ -291,6 +291,8 @@ export interface GrossProfitResult {
   grossProfitRial: number;
   /** 0..100: how much of the revenue could be costed at all. */
   coveragePercent: number;
+  uncostedLines: string[];
+  missingRateSales: number;
 }
 
 /**
@@ -306,17 +308,19 @@ export function grossProfitOf(sales: SaleRow[], costs: CostLookup): GrossProfitR
   let revenueRial = 0;
   let costedRevenueRial = 0;
   let cogsRial = 0;
+  const uncostedLines: string[] = [];
+  let missingRateSales = 0;
 
   for (const sale of sales) {
     if (!isSale(sale)) continue;
 
     const saleRevenue = saleRevenueRial(sale);
-    if (saleRevenue === null) continue; // unknown rate: contributes nothing
+    if (saleRevenue === null) { missingRateSales++; continue; }
     revenueRial += saleRevenue;
 
     const wonLines = sale.items.filter((i) => i.status === "برنده");
-    // Line revenue is apportioned from the document total, so discounts, tax and
-    // extras already priced into `finalAmount` are reflected per line.
+    // Apportion net revenue after discounts and extras. VAT is excluded before
+    // this allocation, including on partially won and partly costed documents.
     const lineGross = wonLines.reduce((sum, i) => sum + money(i.totalPriceRial), 0);
     if (lineGross <= 0) continue;
 
@@ -340,7 +344,7 @@ export function grossProfitOf(sales: SaleRow[], costs: CostLookup): GrossProfitR
         if (unit !== undefined) cost = unit * Number(line.quantity ?? 0);
       }
 
-      if (cost === null) continue; // uncosted: out of both sides of the margin
+      if (cost === null) { uncostedLines.push(line.productName); continue; }
       costedRevenueRial += lineRevenue;
       cogsRial += cost;
     }
@@ -350,6 +354,8 @@ export function grossProfitOf(sales: SaleRow[], costs: CostLookup): GrossProfitR
     revenueRial: Math.round(revenueRial),
     costedRevenueRial: Math.round(costedRevenueRial),
     cogsRial: Math.round(cogsRial),
+    uncostedLines,
+    missingRateSales,
     grossProfitRial: Math.round(costedRevenueRial - cogsRial),
     coveragePercent: revenueRial > 0
       ? Math.round((costedRevenueRial / revenueRial) * 1000) / 10

@@ -15,6 +15,7 @@ import { contactResultReport } from "../services/contactResultService";
 import { createBulkCallTasks } from "../services/bulkCallTaskService";
 import { handoffFromTask, readHandoffRequest } from "../services/taskHandoffService";
 import { addTaskWorkLog, listTaskWorkLogs } from "../services/taskWorkLogService";
+import { correctContactResult } from '../services/contactResultCorrection';
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
@@ -347,6 +348,16 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     } catch (err) {
       sendError(res, err, "POST /api/tasks/:id/handoff");
     }
+  });
+
+  app.put('/api/tasks/:id/contact-result', async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, 'write');
+    if (!user) return;
+    try {
+      const result = await correctContactResult(req.params.id, req.body ?? {}, user);
+      if (!result) { res.status(404).json({ success: false, error: 'وظیفه یافت نشد.' }); return; }
+      res.json({ success: true, ...result });
+    } catch (err) { sendError(res, err, 'PUT /api/tasks/:id/contact-result'); }
   });
 
   app.get("/api/tasks/:id/work-logs", async (req, res) => {

@@ -16,7 +16,7 @@ export function safeDivide(num: number, denom: number): number {
   return num / denom;
 }
 import { Proforma, Transaction, ExchangeRate, Project } from '../types';
-import { roundMoney } from './proformaTotals';
+import { computeProformaTotals, roundMoney } from './proformaTotals';
 
 // Helper to map Persian currency names to English codes
 export const mapCurrencyToEnglish = (persian: string | undefined): 'USD' | 'EUR' | 'AED' | 'CNY' | 'IRR' => {
@@ -97,7 +97,27 @@ export const isSalesProforma = (pf: Proforma): boolean => {
   return status === 'تأیید شده (برنده)' || status === 'نیمه برنده';
 };
 
-// Helper to get won items currency amount
+/** Net revenue of won lines, after discounts and extras, excluding VAT.
+ * Profit must not use the receivable below, which includes collected tax.
+ * Deliberately independent of taxPercent, taxAmount and finalAmount so changing
+ * VAT alone cannot change revenue, profit, commission or customer ranking.
+ */
+export function getWonItemsPreTaxCurrencyAmount(pf: Proforma): number {
+  if (!isSalesProforma(pf)) return 0;
+  const lines = pf.items || [];
+  const amount = (item: Proforma['items'][number]) => Number(item.totalPriceRIYAL ?? (item.quantity * item.unitPriceRIYAL)) || 0;
+  const totals = computeProformaTotals({
+    lineTotals: lines.map(amount),
+    discountPercent: pf.discountPercent, discountAmount: pf.discountAmount,
+    extraCosts: pf.extraCosts,
+  });
+  if (totals.totalAmount <= 0) return 0;
+  const won = lines.filter((line) => line.status === 'برنده').reduce((sum, line) => sum + amount(line), 0);
+  const share = won / totals.totalAmount;
+  return won - roundMoney(totals.discountAmount * share) + roundMoney(totals.extraCosts * share);
+}
+
+// Amount due from the customer, including VAT. Keep this for settlements.
 export const getWonItemsCurrencyAmount = (pf: Proforma): number => {
   const status = getProformaLiteralStatus(pf);
   if (status !== 'تأیید شده (برنده)' && status !== 'نیمه برنده') return 0;

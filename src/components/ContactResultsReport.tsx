@@ -5,6 +5,9 @@ import { useUserDirectory } from "../api/useUserDirectory";
 import { tasksApi, type ContactResultReport } from "../api/tasks";
 import { getTodayShamsi } from "../dateUtils";
 import { CONTACT_RESULT_UNRECORDED } from "../utils/contactResults";
+import { DEFAULT_CONTACT_RESULTS } from '../utils/contactResults';
+import ContactResultEditor from './ContactResultEditor';
+import { useRevalidate } from '../api/liveData';
 
 /** A count in prose, in Persian digits — these are calls, never money. */
 const fa = (n: number): string => n.toLocaleString("fa-IR");
@@ -17,7 +20,7 @@ const fa = (n: number): string => n.toLocaleString("fa-IR");
  * result narrows the *list* and leaves the counts whole, because a total that
  * changed with the filter would read as calls disappearing.
  */
-export default function ContactResultsReport(): React.ReactElement {
+export default function ContactResultsReport({ contactResults = DEFAULT_CONTACT_RESULTS }: { contactResults?: readonly string[] } = {}): React.ReactElement {
   const today = getTodayShamsi();
   const [from, setFrom] = useState(`${today.slice(0, 8)}01`);
   const [to, setTo] = useState(today);
@@ -26,6 +29,8 @@ export default function ContactResultsReport(): React.ReactElement {
   const [report, setReport] = useState<ContactResultReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [revision, setRevision] = useState(0);
+  useRevalidate(['tasks'], () => setRevision((n) => n + 1));
   const { users } = useUserDirectory();
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export default function ContactResultsReport(): React.ReactElement {
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [from, to, assigneeUserId, result]);
+  }, [from, to, assigneeUserId, result, revision]);
 
   const summary = report?.summary;
   const resultKeys = summary?.byResult.map((r) => r.result) ?? [];
@@ -174,7 +179,7 @@ export default function ContactResultsReport(): React.ReactElement {
                       <td className="py-1.5 px-2 whitespace-nowrap">{row.completedAtJalali ?? "—"}</td>
                       <td className="py-1.5 px-2 text-slate-800">{row.customerName || "—"}</td>
                       <td className="py-1.5 px-2 whitespace-nowrap">{row.assignedToName || "—"}</td>
-                      <td className="py-1.5 px-2">{row.contactResult || <span className="text-faint">{CONTACT_RESULT_UNRECORDED}</span>}</td>
+                      <td className="py-1.5 px-2"><ContactResultEditor taskId={row.id} result={row.contactResult} options={contactResults} /></td>
                       <td className="py-1.5 px-2 whitespace-pre-line break-words">{row.completionNote || ""}</td>
                     </tr>
                   ))}

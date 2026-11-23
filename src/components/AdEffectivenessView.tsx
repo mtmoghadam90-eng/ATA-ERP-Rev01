@@ -379,6 +379,7 @@ export default function AdEffectivenessView({ settings }: Props) {
               <button type="button" onClick={() => setEditing(null)} className="p-1 text-slate-400"><X size={16} /></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
+              <p className="text-xs text-slate-500">درآمد و هزینه را بدون مالیات بر ارزش افزوده وارد کنید؛ مبنای بازگشت سرمایه، مبالغ قبل از مالیات است.</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Field label="کد کمپین" hint="خالی = خودکار">
                   <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} dir="ltr"

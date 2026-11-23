@@ -1,4 +1,17 @@
 import { recalculateAll } from "./customerValueService";
+import { getDb } from '../db';
+
+/** Stored metrics from before this fix contain VAT. Refresh once after deploy;
+ * mark success only after the new values were actually written. Normal
+ * restarts skip the full recalculation, and a failed refresh retries next time.
+ */
+export async function refreshPreVatProfitMetricsOnce(db = getDb(), recalculate: () => Promise<unknown> = recalculateAll): Promise<void> {
+  const id = 'profit-pre-vat-v1';
+  if (await db.appSetting.findUnique({ where: { id } })) return;
+  await recalculate();
+  const data = JSON.stringify({ basis: 'PRE_VAT', completedAt: new Date().toISOString() });
+  await db.appSetting.upsert({ where: { id }, create: { id, data }, update: { data } });
+}
 
 /**
  * Schedules a customer-value recalculation without making anyone wait for it.

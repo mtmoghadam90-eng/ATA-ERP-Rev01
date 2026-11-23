@@ -5841,7 +5841,7 @@ export default function ProformasView({
                                   margin < 0 ? "text-rose-600" : "text-emerald-600"
                                 }`}
                               >
-                                حاشیه سود: {margin}%
+                                حاشیه سود قبل از ارزش افزوده: {margin}%
                               </span>
                             )}
 
