@@ -5724,6 +5724,56 @@ head("Correcting completed calls from the workboard report and task history");
   act(() => modalRoot.unmount()); host.remove(); g.fetch = original;
 }
 
+head("Purchase order edit updates the main card and cached import timeline");
+for (const delayedDetail of [false, true]) {
+  const { default: PurchaseOrdersView } = await import("../src/components/PurchaseOrdersView");
+  const original = g.fetch;
+  let order: any = { id: "po-date", poNumber: "PO-DATE", supplierId: "supplier", supplier: { id: "supplier", name: "تامین‌کننده" }, status: "پیش‌نویس", currency: "دلار", exchangeRate: 100000, orderDateJalali: "1405/09/01", totalForeignAmount: 0, landedCostRial: 0, landedCostForeign: 0, createdAt: "2026-11-01T00:00:00Z", updatedAt: "2026-11-01T00:00:00Z", items: [], customValues: "{}", notes: "" };
+  const writes: any[] = [];
+  let detailReads = 0;
+  let releaseDetail: (() => void) | undefined;
+  g.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const path = String(url);
+    if (init?.method === "PUT") {
+      const body = JSON.parse(init.body || "{}"); writes.push(body);
+      order = { ...order, orderDateJalali: body.orderDate, updatedAt: "2026-11-24T08:00:00Z" };
+    }
+    if (path === "/api/purchase-orders/po-date" && !init?.method && ++detailReads === 1 && delayedDetail) {
+      const oldOrder = { ...order };
+      await new Promise<void>((resolve) => { releaseDetail = resolve; });
+      return { ok: true, status: 200, json: async () => ({ success: true, purchaseOrder: oldOrder }) };
+    }
+    let payload: any = { success: true, rows: [], total: 0, totalPages: 1, page: 1, pageSize: 50, users: [], rates: [], notes: [] };
+    if (path === "/api/purchase-orders/po-date") payload = { success: true, purchaseOrder: order };
+    else if (path.startsWith("/api/purchase-orders?")) payload = { ...payload, rows: [order], total: 1 };
+    else if (path === "/api/suppliers/supplier") payload = { success: true, supplier: { id: "supplier", name: "تامین‌کننده", status: "فعال" } };
+    return { ok: true, status: 200, json: async () => payload };
+  }) as never;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  const settle = async () => { for (let i = 0; i < 25; i++) await act(async () => { await Promise.resolve(); }); };
+  const clickText = async (text: string) => { await act(async () => { Array.from(host.querySelectorAll<HTMLButtonElement>("button")).find((b) => b.textContent?.includes(text))!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); }); await settle(); };
+  await act(async () => root.render(React.createElement(PurchaseOrdersView, { settings: DEFAULT_SETTINGS, currentUser: { isSystemAdmin: true } })));
+  await settle();
+  await clickText("نمایش اقلام و چرخه زمانی");
+  ok("the old date appears on both summary and expanded timeline", (host.textContent!.match(/1405\/09\/01/g) || []).length === 2);
+  await clickText("ویرایش جزئیات");
+  const date = host.querySelector<HTMLInputElement>("#po-order-date-picker-wrapper input")!;
+  ok("the edit starts with the stored order date", date?.value === "1405/09/01");
+  act(() => { date.value = "1405/09/03"; handlers(date).onChange?.({ target: date }); });
+  await act(async () => { host.querySelector<HTMLFormElement>("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  ok("the edited date reaches the server", writes.at(-1)?.orderDate === "1405/09/03");
+  ok("both dates update on the still-expanded card", (host.textContent!.match(/1405\/09\/03/g) || []).length === 2 && !host.textContent!.includes("1405/09/01"));
+  if (delayedDetail) {
+    await act(async () => { releaseDetail?.(); }); await settle();
+    ok("an older detail response cannot replace the saved dates", (host.textContent!.match(/1405\/09\/03/g) || []).length === 2);
+  }
+  await clickText("بستن جزئیات"); await clickText("نمایش اقلام و چرخه زمانی");
+  ok("folding and reopening keeps the saved date", (host.textContent!.match(/1405\/09\/03/g) || []).length === 2);
+  act(() => root.unmount()); host.remove(); g.fetch = original;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
