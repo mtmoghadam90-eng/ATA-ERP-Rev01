@@ -1,5 +1,5 @@
 import { purchaseOrderLandedCost, resolveShippingTerms, RIAL, shippingRateRefusal } from '../utils/purchaseOrderCost';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { 
@@ -252,6 +252,10 @@ export default function PurchaseOrdersView({
       const oldStatus = previousStatus ?? list.rows.find(r => r.id === po.id)?.status;
 
       const saved = await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
+      // The expanded card renders its cached detail rather than the list row.
+      // Adopt the authoritative save and invalidate any older detail request.
+      detailGeneration.current[po.id] = (detailGeneration.current[po.id] ?? 0) + 1;
+      setPoDetails((prev) => ({ ...prev, [po.id]: detailToPurchaseOrder(saved) }));
       list.refresh();
 
       // Receiving the goods is where this module's work on the project ends.
@@ -321,6 +325,7 @@ export default function PurchaseOrdersView({
    * fetch what it needs, and it keeps the list itself cheap.
    */
   const [poDetails, setPoDetails] = useState<Record<string, PurchaseOrder>>({});
+  const detailGeneration = useRef<Record<string, number>>({});
   const [loadingDetail, setLoadingDetail] = useState<Set<string>>(new Set());
 
   const togglePOExpanded = (id: string) => {
@@ -333,9 +338,13 @@ export default function PurchaseOrdersView({
     });
 
     if (!opening || poDetails[id]) return;
+    const generation = detailGeneration.current[id] ?? 0;
     setLoadingDetail((prev) => new Set(prev).add(id));
     void purchaseOrdersApi.get(id)
-      .then((detail) => setPoDetails((prev) => ({ ...prev, [id]: detailToPurchaseOrder(detail) })))
+      .then((detail) => {
+        if ((detailGeneration.current[id] ?? 0) !== generation) return;
+        setPoDetails((prev) => ({ ...prev, [id]: detailToPurchaseOrder(detail) }));
+      })
       .catch((err) => reportError(err, 'بارگذاری جزئیات سفارش خرید با خطا مواجه شد.'))
       .finally(() => setLoadingDetail((prev) => {
         const next = new Set(prev);
