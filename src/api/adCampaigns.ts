@@ -43,6 +43,7 @@ export interface AdCampaignInput {
   audienceSize?: number;
   directCost?: number;
   responses?: number | null;
+  /** Compatibility only; leads are derived from linked projects. */
   leads?: number | null;
   sales?: number | null;
   revenue?: number | null;

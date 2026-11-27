@@ -87,7 +87,7 @@ export default function ActivityComposer({
   const send = async (confirmed = false) => {
     if (busy || uploading) return;
     if (!text.trim() && attachments.length === 0) return;
-    if (notifyMessenger && notifyUserIds.length === 0) { setProblem('همکاران دریافت‌کنندهٔ اطلاع را انتخاب کنید.'); return; }
+    if (named.length === 0 && notifyMessenger && notifyUserIds.length === 0) { setProblem('همکاران دریافت‌کنندهٔ اطلاع را انتخاب کنید.'); return; }
     if (!confirmed && named.length > 0 && openReferralsFor) {
       const hits = openReferralsFor(named.map((u) => u.id));
       if (hits.length > 0) {
@@ -108,7 +108,7 @@ export default function ActivityComposer({
        */
       await onSend(text.trim(), {
         dueDate: named.length > 0 ? dueDate : '', dueDateByAssignee: named.length > 0 && dueByAssignee,
-        notifyReplyAuthor: false, notifyUserIds: notifyMessenger ? notifyUserIds : [],
+        notifyReplyAuthor: false, notifyUserIds: named.length === 0 && notifyMessenger ? notifyUserIds : [],
       });
       setText('');
       setDueDate('');
@@ -158,7 +158,10 @@ export default function ActivityComposer({
 
       <MentionTextarea
         value={text}
-        onChange={(next) => { setText(next); setDuplicates(null); }}
+        onChange={(next) => {
+          setText(next); setDuplicates(null);
+          if (parseMentions(next, users).length > 0) { setNotifyMessenger(false); setNotifyUserIds([]); setProblem(''); }
+        }}
         users={users}
         placeholder="پیام، شرح فعالیت یا مذاکره… برای ارجاع، نام همکار را با @ بنویسید"
         className="w-full border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-sky-500/20 outline-none text-right placeholder-slate-400 bg-white"
@@ -190,7 +193,7 @@ export default function ActivityComposer({
         />
       )}
 
-      <div className="space-y-2" data-activity-notify>
+      {named.length === 0 && <div className="space-y-2" data-activity-notify>
         <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
           <input type="checkbox" data-activity-notify-toggle checked={notifyMessenger} disabled={busy} onChange={(e) => { setNotifyMessenger(e.target.checked); setProblem(''); }} />
           <BellRing size={13} /> اطلاع از طریق پیام‌رسان
@@ -202,7 +205,7 @@ export default function ActivityComposer({
           </label>)}
         </div>}
         {problem && <p role="alert" className="text-xs text-red-700">{problem}</p>}
-      </div>
+      </div>}
 
       {/*
         «قبلاً ارجاع باز داده‌ای؛ باز هم بفرستم؟» — asked in place rather than in
