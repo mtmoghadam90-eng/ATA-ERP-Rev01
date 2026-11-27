@@ -5783,6 +5783,62 @@ for (const delayedDetail of [false, true]) {
   act(() => root.unmount()); host.remove(); g.fetch = original;
 }
 
+head("A saved supplier inquiry can move to another project");
+{
+  const { default: SupplierInquiriesView } = await import("../src/components/SupplierInquiriesView");
+  const original = g.fetch;
+  const source = { id: "old-project", name: "پروژه مبدا", code: "P1" };
+  const destination = { id: "new-project", name: "پروژه مقصد", code: "P2" };
+  const item = { id: "line", name: "فلومتر", quantity: 2, currency: "ریال", priceForeign: 500, priceRial: 500 };
+  let inquiry = {
+    id: "move-inquiry", projectId: source.id, project: source,
+    supplierId: "supplier", supplier: { id: "supplier", name: "تأمین‌کننده" },
+    creationDateJalali: "1405/09/01", items: [item], steps: [],
+  };
+  let saved: { projectId: string; items: { name: string; priceRial: number }[] } | undefined;
+  g.fetch = async (url: string, init?: RequestInit) => {
+    const path = String(url);
+    let payload: Record<string, unknown> = { success: true, rows: [], total: 0, page: 1, totalPages: 1, rates: [] };
+    if (path === "/api/supplier-inquiries/move-inquiry" && init?.method === "PUT") {
+      saved = JSON.parse(String(init.body));
+      inquiry = { ...inquiry, projectId: destination.id, project: destination };
+      payload = { success: true, inquiry };
+    } else if (path.startsWith("/api/supplier-inquiries?")) {
+      payload = { ...payload, rows: [inquiry], total: 1 };
+    } else if (path.startsWith("/api/projects?")) {
+      payload = { ...payload, rows: [source, destination], total: 2 };
+    }
+    return { ok: true, status: 200, json: async () => payload };
+  };
+
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(React.createElement(SupplierInquiriesView, {
+      settings: DEFAULT_SETTINGS, currentUser: { id: "admin", username: "admin", fullName: "Admin", role: "admin", permissions: {}, isSystemAdmin: true },
+    })));
+    await act(async () => host.querySelector<HTMLButtonElement>('[title="ویرایش استعلام"]')?.click());
+    const form = host.querySelector<HTMLFormElement>("#inquiry-modal-content form");
+    const projectButton = (label: string) => Array.from(form?.querySelectorAll("button") ?? [])
+      .find((button) => button.textContent?.includes(label));
+    const picker = projectButton(source.name);
+    ok("the saved project's picker is enabled", !!picker && !picker.disabled);
+    await act(async () => picker?.click());
+    await act(async () => projectButton(destination.name)?.click());
+    await act(async () => {
+      form?.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true }));
+    });
+    ok("saving sends the new project with the existing quoted item and price",
+      saved?.projectId === destination.id && saved.items[0]?.name === item.name &&
+      saved.items[0]?.priceRial === item.priceRial, saved);
+    ok("the refreshed card shows the destination project", !!host.textContent?.includes(destination.name));
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+    g.fetch = original;
+  }
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
