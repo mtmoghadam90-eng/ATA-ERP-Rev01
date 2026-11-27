@@ -860,7 +860,7 @@ export async function addActivity(
   const alreadyNotified = mentioned.map((u) => u.id);
   if (input.referral?.assignedToUserId) alreadyNotified.push(input.referral.assignedToUserId);
   if (input.notifyReplyAuthor === true && replyAuthorUserId && mentioned.length === 0) alreadyNotified.push(replyAuthorUserId);
-  for (const recipientId of activityNoticeRecipients(input.notifyUserIds, user.id, alreadyNotified)) {
+  for (const recipientId of activityNoticeRecipients(mentioned.length === 0 ? input.notifyUserIds : [], user.id, alreadyNotified)) {
     await afterCommit('activity selected messenger', () => notifyStaff({
       kind: 'ACTIVITY_NOTICE', assigneeUserId: recipientId,
       actorUserId: user.id, actorName: author?.fullName ?? null,

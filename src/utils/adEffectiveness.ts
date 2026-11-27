@@ -24,7 +24,7 @@ export interface AdCampaignFigures {
   directCost: number;
   /** «تعداد بازخورد اولیه» — null until recorded. */
   responses: number | null;
-  /** «تعداد سرنخ واقعی». */
+  /** Leads derived from attributed projects when linkedProjects is available. */
   leads: number | null;
   /** «تعداد فروش نهایی». */
   sales: number | null;
@@ -61,17 +61,23 @@ const recorded = (v: number | null | undefined): v is number =>
 
 const ratio = (n: number, d: number): number | null => (d > 0 ? n / d : null);
 
+/** Project attribution is authoritative when available, including zero.
+ * The manual count is only a compatibility fallback for unattributed figures.
+ */
+export const campaignLeadCount = (c: AdCampaignFigures): number | null => c.linkedProjects ?? c.leads;
+
 /** One campaign's figures. A ratio whose half is unrecorded is null, never 0. */
 export function adMetricsOf(c: AdCampaignFigures): AdMetrics {
   const cost = Number(c.directCost) || 0;
   const audience = Number(c.audienceSize) || 0;
+  const leads = campaignLeadCount(c);
   return {
     responseRate: recorded(c.responses) ? ratio(c.responses, audience) : null,
-    leadRate: recorded(c.leads) ? ratio(c.leads, audience) : null,
+    leadRate: recorded(leads) ? ratio(leads, audience) : null,
     saleRate: recorded(c.sales) ? ratio(c.sales, audience) : null,
-    leadToSaleRate: recorded(c.sales) && recorded(c.leads) ? ratio(c.sales, c.leads) : null,
+    leadToSaleRate: recorded(c.sales) && recorded(leads) ? ratio(c.sales, leads) : null,
     costPerResponse: recorded(c.responses) ? ratio(cost, c.responses) : null,
-    costPerLead: recorded(c.leads) ? ratio(cost, c.leads) : null,
+    costPerLead: recorded(leads) ? ratio(cost, leads) : null,
     costPerSale: recorded(c.sales) ? ratio(cost, c.sales) : null,
     roi: recorded(c.revenue) ? ratio(c.revenue - cost, cost) : null,
     roas: recorded(c.revenue) ? ratio(c.revenue, cost) : null,
@@ -86,7 +92,7 @@ export interface AdAggregate {
   leads: number;
   sales: number;
   revenue: number;
-  /** Counted from the projects that name the campaign — beside the typed figures, never mixed into them. */
+  /** Project count is the lead count; won projects are reported separately. */
   linkedProjects: number;
   linkedWon: number;
   metrics: AdMetrics;
@@ -111,11 +117,11 @@ export function aggregateAdCampaigns(list: readonly AdCampaignFigures[]): AdAggr
   const cost = (c: AdCampaignFigures) => Number(c.directCost) || 0;
   const audience = (c: AdCampaignFigures) => Number(c.audienceSize) || 0;
   const r = (c: AdCampaignFigures) => c.responses ?? 0;
-  const l = (c: AdCampaignFigures) => c.leads ?? 0;
+  const l = (c: AdCampaignFigures) => campaignLeadCount(c) ?? 0;
   const s = (c: AdCampaignFigures) => c.sales ?? 0;
   const rev = (c: AdCampaignFigures) => c.revenue ?? 0;
   const hasR = (c: AdCampaignFigures) => recorded(c.responses);
-  const hasL = (c: AdCampaignFigures) => recorded(c.leads);
+  const hasL = (c: AdCampaignFigures) => recorded(campaignLeadCount(c));
   const hasS = (c: AdCampaignFigures) => recorded(c.sales);
   const hasRev = (c: AdCampaignFigures) => recorded(c.revenue);
 

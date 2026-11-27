@@ -79,9 +79,9 @@ function toRow(r: Prisma.AdCampaignGetPayload<{ select: typeof SELECT }>): AdCam
  * it: a campaign's results are a fact about the campaign, and this module is
  * already restricted to the people who may read them.
  */
-async function withLinkedProjects(rows: AdCampaignRow[]): Promise<AdCampaignRow[]> {
+export async function withLinkedProjects(rows: AdCampaignRow[], db = getDb()): Promise<AdCampaignRow[]> {
   if (rows.length === 0) return rows;
-  const linked = await getDb().project.findMany({
+  const linked = await db.project.findMany({
     where: { adCampaignId: { in: rows.map((r) => r.id) } },
     select: { adCampaignId: true, status: true },
   });
@@ -94,6 +94,9 @@ async function withLinkedProjects(rows: AdCampaignRow[]): Promise<AdCampaignRow[
   }
   return rows.map((r) => ({
     ...r,
+    // Each currently attributed project is one lead. Never add the old typed
+    // count to it: it may describe these same projects.
+    leads: counts.get(r.id)?.all ?? 0,
     linkedProjects: counts.get(r.id)?.all ?? 0,
     linkedWon: counts.get(r.id)?.won ?? 0,
   }));
@@ -189,7 +192,7 @@ function scalarData(input: AdCampaignInput): Record<string, unknown> {
   if ("audienceSize" in input) data.audienceSize = count(input.audienceSize) ?? 0;
   if ("directCost" in input) data.directCost = Math.max(0, toNumber(input.directCost, 0));
   if ("responses" in input) data.responses = count(input.responses);
-  if ("leads" in input) data.leads = count(input.leads);
+  // Lead counts are derived on read, including for imports and integrations.
   if ("sales" in input) data.sales = count(input.sales);
   if ("revenue" in input) {
     const v = input.revenue;
@@ -208,11 +211,6 @@ export function adCampaignRefusal(data: Record<string, unknown>, creating: boole
   }
   if (creating || "topic" in data) {
     if (!String(data.topic ?? "").trim()) return "موضوع کمپین را بنویسید.";
-  }
-  const leads = data.leads as number | null | undefined;
-  const sales = data.sales as number | null | undefined;
-  if (typeof leads === "number" && typeof sales === "number" && sales > leads) {
-    return "تعداد فروش نهایی نمی‌تواند از تعداد سرنخ واقعی بیشتر باشد.";
   }
   return null;
 }
@@ -249,7 +247,7 @@ export async function createAdCampaign(
       description: `ثبت کمپین ${created.code} — ${created.topic}`, afterState: created },
     user, todayJalali,
   ).catch(() => {});
-  return { campaign: toRow(created) };
+  return { campaign: (await withLinkedProjects([toRow(created)]))[0] };
 }
 
 export async function updateAdCampaign(
@@ -279,7 +277,7 @@ export async function updateAdCampaign(
       description: `ویرایش کمپین ${updated.code}`, beforeState: before, afterState: updated },
     user, todayJalali,
   ).catch(() => {});
-  return { campaign: toRow(updated) };
+  return { campaign: (await withLinkedProjects([toRow(updated)]))[0] };
 }
 
 export async function deleteAdCampaign(

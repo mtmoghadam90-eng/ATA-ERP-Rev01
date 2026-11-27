@@ -1413,8 +1413,16 @@ head("Activity messenger notices: off by default, explicitly selected colleagues
   refuse = false; await send();
   ok("only chosen colleagues travel with the message", sends.at(-1)?.notifyUserIds.join(",") === "u1,u2");
   ok("the next message starts off with no recipients", !toggle().checked && !host.querySelector("[data-notify-user]"));
-  type("@علی رضایی بررسی کن"); change("[data-activity-notify-toggle]", { checked: true }); change('[data-notify-user="u2"]', { checked: true }); await send();
-  ok("notice recipients stay separate from the @ referral", sends.at(-1)?.notifyUserIds.join(",") === "u2" && sends.at(-1)?.text.includes("@علی"));
+  type("پیام تازه"); change("[data-activity-notify-toggle]", { checked: true }); change('[data-notify-user="u2"]', { checked: true });
+  type("@علی رضایی بررسی کن");
+  ok("a mention hides both the notice switch and its recipients", !host.querySelector("[data-activity-notify]") && !host.querySelector("[data-notify-user]"));
+  await send();
+  ok("a mention sends no stale manual recipients", sends.at(-1)?.notifyUserIds.length === 0 && sends.at(-1)?.text.includes("@علی"));
+  type("پیام بدون ارجاع");
+  ok("removing the mention restores the notice switch, off", !!toggle() && !toggle().checked);
+  change("[data-activity-notify-toggle]", { checked: true });
+  type("@علی رضایی بررسی کن"); await send();
+  ok("an empty hidden recipient selection cannot block a referral", sends.at(-1)?.text.includes("@علی") && sends.at(-1)?.notifyUserIds.length === 0);
   act(() => root.unmount()); host.remove();
 }
 
@@ -4830,9 +4838,9 @@ head("Ad effectiveness: the reports are derived from the rows, weighted");
   const posted: { url: string; body: string }[] = [];
   const campaigns = [
     { id: "a1", code: "cp1", runDateJalali: "1404/11/13", channel: "پیامک", topic: "معرفی کلی", audience: "خبرنامه",
-      audienceSize: 314, directCost: 2100000, responses: 5, leads: 1, sales: 0, revenue: 0, quality: null, notes: null, createdByName: null },
+      audienceSize: 314, directCost: 2100000, responses: 5, linkedProjects: 3, linkedWon: 0, leads: 1, sales: 0, revenue: 0, quality: null, notes: null, createdByName: null },
     { id: "a2", code: "cp7", runDateJalali: "1405/01/23", channel: "پیامک", topic: "دعوت", audience: "خبرنامه",
-      audienceSize: 1875, directCost: 18400000, responses: 20, leads: null, sales: null, revenue: null, quality: 3, notes: null, createdByName: null },
+      audienceSize: 1875, directCost: 18400000, responses: 20, linkedProjects: 0, linkedWon: 0, leads: null, sales: null, revenue: null, quality: 3, notes: null, createdByName: null },
   ];
   gA.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
     const u = String(url);
@@ -4852,9 +4860,9 @@ head("Ad effectiveness: the reports are derived from the rows, weighted");
   await settleA();
   ok("ads screen: reads its own endpoint", asked.some((u) => u.includes("/api/ad-campaigns")), asked);
   const row = hostA.querySelector('[data-ad-group-row="پیامک"]')?.textContent ?? "";
-  // Weighted over the campaign whose leads are recorded: 2,100,000 ÷ 1, not (2.1M + 18.4M) ÷ 1.
-  ok("ads screen: a channel's CPL counts only the campaigns whose leads are recorded",
-    row.includes("2,100,000") && !row.includes("20,500,000 ") , row);
+  // All campaign spending divided by the three attributed projects.
+  ok("ads screen: CPL uses attributed projects and all channel spending",
+    row.includes("6,833,333") , row);
   ok("ads screen: both campaigns are in the channel's spend", row.includes("20,500,000"), row);
 
   await act(async () => {
@@ -4870,6 +4878,7 @@ head("Ad effectiveness: the reports are derived from the rows, weighted");
   });
   await settleA();
   ok("ads screen: «کمپین جدید» opens the form", !!hostA.querySelector("#ad-campaign-form"));
+  ok("ads screen: leads are shown as a read-only project count", hostA.querySelector<HTMLInputElement>('[aria-label="سرنخ خودکار کمپین"]')?.readOnly === true);
   act(() => { rootA.unmount(); });
   hostA.remove();
   gA.fetch = realFetchA;

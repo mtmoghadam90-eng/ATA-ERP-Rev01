@@ -25095,6 +25095,39 @@ head("Correct a contact result without completing, reopening or re-dating its ta
   ok("sales follow-ups retain their specialised correction flow", chase);
 }
 
+head("Campaign leads are the attributed projects, never an added manual count");
+{
+  const { withLinkedProjects } = await import("../src/server/services/adCampaignService");
+  const rows = [
+    { id: "a", leads: 99, audienceSize: 100, directCost: 120, responses: null, sales: 1, revenue: null },
+    { id: "b", leads: null, audienceSize: 100, directCost: 80, responses: null, sales: 0, revenue: null },
+    { id: "empty", leads: 100, audienceSize: 100, directCost: 30, responses: null, sales: null, revenue: null },
+  ];
+  let projects = [
+    { id: "p1", adCampaignId: "a", status: "جدید" },
+    { id: "p2", adCampaignId: "a", status: "باخته" },
+    { id: "p3", adCampaignId: "a", status: "برنده (موفق)" },
+    { id: "p4", adCampaignId: "b", status: "جدید" },
+  ];
+  const db = { project: { findMany: async () => projects } };
+  const read = () => withLinkedProjects(rows as never, db as never);
+  let result = await read();
+  eq("each project counts once regardless of stage or outcome", result[0].leads, 3);
+  eq("another campaign gets its own project's lead", result[1].leads, 1);
+  eq("a campaign without projects has zero leads despite an old manual value", result[2].leads, 0);
+  eq("re-reading does not increment a stored counter", (await read())[0].leads, 3);
+  eq("CPL uses the project count", adMetricsOf(result[0]).costPerLead, 40);
+  const total = aggregateAdCampaigns(result);
+  eq("totals never double-count old manual figures", total.leads, 4);
+  eq("weighted CPL includes spend from campaigns without leads", total.metrics.costPerLead, 57.5);
+  projects[0].adCampaignId = "b";
+  result = await read();
+  eq("reattributing a project removes it from the old campaign", result[0].leads, 2);
+  eq("...and counts it for the new campaign", result[1].leads, 2);
+  projects = projects.filter((p) => p.id !== "p2");
+  eq("deleting a project removes its lead", (await read())[0].leads, 1);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

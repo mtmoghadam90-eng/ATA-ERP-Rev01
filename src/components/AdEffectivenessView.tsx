@@ -5,9 +5,10 @@ import {
 import type { ERPSettings } from '../types';
 import { adCampaignsApi, type AdCampaignInput, type AdCampaignRow } from '../api/adCampaigns';
 import { ApiError } from '../api/client';
+import { useRevalidate } from '../api/liveData';
 import {
   AD_SHEET_COLUMNS, DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS, adMetricsOf, adMonthOf,
-  aggregateAdCampaigns, groupAdCampaigns, parseAdSheetRow, sheetNumber,
+  aggregateAdCampaigns, groupAdCampaigns, parseAdSheetRow, sheetNumber, campaignLeadCount,
   type AdAggregate, type AdMetrics,
 } from '../utils/adEffectiveness';
 import { formatMoney } from '../numUtils';
@@ -41,7 +42,6 @@ interface FormState {
   audienceSize: string;
   directCost: string;
   responses: string;
-  leads: string;
   sales: string;
   revenue: string;
   quality: string;
@@ -50,7 +50,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   code: '', runDate: '', channel: '', topic: '', audience: '', audienceSize: '',
-  directCost: '', responses: '', leads: '', sales: '', revenue: '', quality: '', notes: '',
+  directCost: '', responses: '', sales: '', revenue: '', quality: '', notes: '',
 };
 
 const formOf = (c: AdCampaignRow): FormState => ({
@@ -62,7 +62,6 @@ const formOf = (c: AdCampaignRow): FormState => ({
   audienceSize: String(c.audienceSize ?? ''),
   directCost: String(c.directCost ?? ''),
   responses: c.responses === null ? '' : String(c.responses),
-  leads: c.leads === null ? '' : String(c.leads),
   sales: c.sales === null ? '' : String(c.sales),
   revenue: c.revenue === null ? '' : String(c.revenue),
   quality: c.quality === null ? '' : String(c.quality),
@@ -79,7 +78,6 @@ const inputOf = (f: FormState): AdCampaignInput => ({
   audienceSize: sheetNumber(f.audienceSize) ?? 0,
   directCost: sheetNumber(f.directCost) ?? 0,
   responses: sheetNumber(f.responses),
-  leads: sheetNumber(f.leads),
   sales: sheetNumber(f.sales),
   revenue: sheetNumber(f.revenue),
   quality: sheetNumber(f.quality),
@@ -125,6 +123,7 @@ export default function AdEffectivenessView({ settings }: Props) {
   }, [filters]);
 
   useEffect(() => { void load(); }, [load]);
+  useRevalidate(['projects', 'ad-campaigns'], () => { void load(); });
 
   const total: AdAggregate = useMemo(() => aggregateAdCampaigns(rows), [rows]);
   const groups = useMemo(() => groupAdCampaigns(rows, (c) =>
@@ -204,7 +203,7 @@ export default function AdEffectivenessView({ settings }: Props) {
         [AD_SHEET_COLUMNS.audienceSize]: c.audienceSize,
         [AD_SHEET_COLUMNS.directCost]: c.directCost,
         [AD_SHEET_COLUMNS.responses]: c.responses ?? '',
-        [AD_SHEET_COLUMNS.leads]: c.leads ?? '',
+        [AD_SHEET_COLUMNS.leads]: campaignLeadCount(c) ?? '',
         [AD_SHEET_COLUMNS.sales]: c.sales ?? '',
         [AD_SHEET_COLUMNS.revenue]: c.revenue ?? '',
         'نرخ تبدیل به بازخورد اولیه': round(m.responseRate),
@@ -345,7 +344,7 @@ export default function AdEffectivenessView({ settings }: Props) {
                     <td className="px-3 py-2 font-mono">{formatMoney(c.audienceSize)}</td>
                     <td className="px-3 py-2 font-mono">{formatMoney(c.directCost)}</td>
                     <td className="px-3 py-2 font-mono">{countText(c.responses)}</td>
-                    <td className="px-3 py-2 font-mono">{countText(c.leads)}</td>
+                    <td className="px-3 py-2 font-mono">{countText(campaignLeadCount(c))}</td>
                     <td className="px-3 py-2 font-mono">{countText(c.sales)}</td>
                     <td className="px-3 py-2 font-mono">{money(c.revenue)}</td>
                     <td className="px-3 py-2 font-mono">{pct(m.leadRate)}</td>
@@ -409,7 +408,7 @@ export default function AdEffectivenessView({ settings }: Props) {
                 <NumBox label="تعداد مخاطب" value={form.audienceSize} onChange={(v) => setForm({ ...form, audienceSize: v })} />
                 <NumBox label="هزینه مستقیم (ریال)" value={form.directCost} onChange={(v) => setForm({ ...form, directCost: v })} />
                 <NumBox label="بازخورد اولیه" value={form.responses} onChange={(v) => setForm({ ...form, responses: v })} />
-                <NumBox label="سرنخ واقعی" value={form.leads} onChange={(v) => setForm({ ...form, leads: v })} />
+                <Field label="سرنخ واقعی (خودکار)"><input aria-label="سرنخ خودکار کمپین" readOnly value={editing === 'new' ? 0 : editing?.linkedProjects ?? 0} className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-slate-50" /></Field>
                 <NumBox label="فروش نهایی" value={form.sales} onChange={(v) => setForm({ ...form, sales: v })} />
                 <NumBox label="درآمد حاصله (ریال)" value={form.revenue} onChange={(v) => setForm({ ...form, revenue: v })} />
                 <Field label="کیفیت کانال">
@@ -427,16 +426,16 @@ export default function AdEffectivenessView({ settings }: Props) {
                   </span>
                   {editing.linkedProjects > 0 && (
                     <button type="button" id="ad-fill-from-projects"
-                      onClick={() => setForm({ ...form, leads: String(editing.linkedProjects), sales: String(editing.linkedWon) })}
+                      onClick={() => setForm({ ...form, sales: String(editing.linkedWon) })}
                       className="px-2.5 py-1 bg-white border border-sky-200 rounded-lg font-bold hover:bg-sky-100">
-                      پر کردن سرنخ و فروش از پروژه‌ها
+                      پر کردن فروش از پروژه‌ها
                     </button>
                   )}
                 </div>
               )}
               <p className="text-[11px] text-slate-500 leading-5">
-                خانه‌ای که هنوز نتیجه‌اش معلوم نیست را خالی بگذارید، نه صفر: کمپینی که سرنخش هنوز ثبت نشده
-                در محاسبه CPL کانال وارد نمی‌شود، ولی «صفر» یعنی واقعاً هیچ سرنخی نیامده.
+                هر پروژهٔ منتسب به کمپین، یک سرنخ است؛ این تعداد خودکار محاسبه می‌شود و با عدد دستی جمع نمی‌شود.
+                سایر نتایج نامعلوم را خالی بگذارید.
               </p>
               <Field label="توضیحات کیفی / درس آموخته" wide>
                 <textarea rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
