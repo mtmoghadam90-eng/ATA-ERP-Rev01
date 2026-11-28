@@ -1419,6 +1419,7 @@ function InquiryFormInner({
     if (editingInquiry) return editingInquiry.projectId || '';
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
+  const [pickedProject, setPickedProject] = useState<Project>();
   /*
    * «خرید انبار» is a choice of its own, not the absence of one.
    *
@@ -1435,7 +1436,10 @@ function InquiryFormInner({
   );
   const chooseWarehouse = (warehouse: boolean) => {
     setForWarehouse(warehouse);
-    if (warehouse) setProjectId('');
+    if (warehouse) {
+      setProjectId('');
+      setPickedProject(undefined);
+    }
   };
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
   /*
@@ -1821,26 +1825,24 @@ function InquiryFormInner({
             <label className="text-xs font-bold text-slate-500">
               {forWarehouse ? 'نوع استعلام' : renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'projectId', 'انتخاب پروژه')}
             </label>
-            {editingInquiry === null && (
-              <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[10px] font-bold" id="inquiry-kind">
-                <button
-                  type="button"
-                  id="inquiry-kind-project"
-                  onClick={() => chooseWarehouse(false)}
-                  className={`px-2 py-1 transition ${!forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >
-                  برای پروژه
-                </button>
-                <button
-                  type="button"
-                  id="inquiry-kind-warehouse"
-                  onClick={() => chooseWarehouse(true)}
-                  className={`px-2 py-1 transition ${forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-                >
-                  خرید انبار (بدون پروژه)
-                </button>
-              </div>
-            )}
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[10px] font-bold" id="inquiry-kind">
+              <button
+                type="button"
+                id="inquiry-kind-project"
+                onClick={() => chooseWarehouse(false)}
+                className={`px-2 py-1 transition ${!forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                برای پروژه
+              </button>
+              <button
+                type="button"
+                id="inquiry-kind-warehouse"
+                onClick={() => chooseWarehouse(true)}
+                className={`px-2 py-1 transition ${forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+              >
+                خرید انبار (بدون پروژه)
+              </button>
+            </div>
           </div>
           {forWarehouse ? (
             <div className="px-3 py-2.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs text-slate-600" id="inquiry-warehouse-note">
@@ -1851,19 +1853,19 @@ function InquiryFormInner({
             value={projectId}
             onChange={(val) => {
               setProjectId(val);
+              setPickedProject(projects.find((project) => project.id === val));
               if (!editingInquiry) seedItemsFromProject(val);
             }}
             onSearchChange={projectPicker.setTerm}
             loading={projectPicker.loading}
             placeholder="-- انتخاب پروژه --"
             required={!forWarehouse && isFieldRequired(settings, 'supplierInquiries', 'projectId')}
-            disabled={editingInquiry !== null} // Lock project on edit
             className="text-xs"
-            // The current value has to be an option or the locked field renders
-            // blank — the picker's matches hold whatever was last searched for,
-            // not necessarily this record's project.
+            // Keep the selected project's label after the remote search resets.
             options={dedupeOptions([
-              { value: '', label: 'خرید انباری (بدون پروژه)' },
+              ...(pickedProject
+                ? [{ value: pickedProject.id, label: `${pickedProject.name} (${pickedProject.code})` }]
+                : []),
               ...(editingInquiry?.projectId
                 ? [{ value: editingInquiry.projectId, label: editingInquiry.projectName || 'پروژه انتخاب‌شده' }]
                 : []),

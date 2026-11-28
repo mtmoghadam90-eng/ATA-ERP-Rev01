@@ -1,4 +1,3 @@
-import { saveAs } from 'file-saver';
 import { oversizedUploadReason } from './utils/uploadLimits';
 
 export async function compressAndResizeImage(
@@ -27,6 +26,7 @@ export async function downloadFileFromServer(url: string, filename: string) {
     const response = await fetch(url);
     if (!response.ok) throw new Error("Network response was not ok");
     const blob = await response.blob();
+    const { default: saveAs } = await import('file-saver');
     saveAs(blob, filename);
   } catch (err) {
     console.warn("Blob download failed, falling back to direct link:", err);
