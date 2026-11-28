@@ -72,6 +72,7 @@ import HolidayCalendarTab from "../src/components/HolidayCalendarTab";
 import { invalidateUserDirectory } from "../src/api/useUserDirectory";
 import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
+import { defaultPermissions } from "../src/utils/permissions";
 import { RelationPicker } from "../src/components/RelationPicker";
 import { ConditionValueField } from "../src/components/ConditionValueField";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
@@ -5815,7 +5816,7 @@ head("A saved supplier inquiry can move to another project");
   const root = createRoot(host);
   try {
     await act(async () => root.render(React.createElement(SupplierInquiriesView, {
-      settings: DEFAULT_SETTINGS, currentUser: { id: "admin", username: "admin", fullName: "Admin", role: "admin", permissions: {}, isSystemAdmin: true },
+      settings: DEFAULT_SETTINGS, currentUser: { id: "admin", username: "admin", fullName: "Admin", role: "admin", permissions: defaultPermissions("admin"), isSystemAdmin: true },
     })));
     await act(async () => host.querySelector<HTMLButtonElement>('[title="ویرایش استعلام"]')?.click());
     const form = host.querySelector<HTMLFormElement>("#inquiry-modal-content form");
