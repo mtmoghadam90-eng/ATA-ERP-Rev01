@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { tasksApi, type TaskWorkLog } from "../api/tasks";
 
+const WORK_LOG_LABELS: Record<string, string> = {
+  COMPLETION: "اتمام کار",
+  CONTACT_RESULT: "اصلاح نتیجه تماس",
+  COMPLETION_NOTE: "ویرایش شرح کار نهایی",
+};
+
 export default function TaskWorkHistory({ taskId, version = 0 }: { taskId: string; version?: number }) {
   const [rows, setRows] = useState<TaskWorkLog[]>([]);
   const [page, setPage] = useState(1);
@@ -43,10 +49,11 @@ export default function TaskWorkHistory({ taskId, version = 0 }: { taskId: strin
       {rows.map((row) => (
         <article key={row.id} className="border-b border-slate-100 pb-3 last:border-0 last:pb-0 space-y-1.5" data-work-log={row.id}>
           <div className="flex flex-wrap justify-between gap-1 text-[11px] text-slate-500">
-            <span className="font-medium text-slate-700">{row.authorName} · {row.kind === "COMPLETION" ? "اتمام کار" : row.kind === 'CONTACT_RESULT' ? 'اصلاح نتیجه تماس' : "شرح کار"}</span>
+            <span className="font-medium text-slate-700">{row.authorName} · {WORK_LOG_LABELS[row.kind] ?? "شرح کار"}</span>
             <time dateTime={row.createdAt}>{new Date(row.createdAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
           </div>
           {row.text && <p className="text-xs whitespace-pre-wrap break-words text-slate-700">{row.text}</p>}
+          {row.kind === "COMPLETION_NOTE" && !row.text && <p className="text-xs text-slate-600">شرح کار نهایی پاک شد.</p>}
           {row.attachments.map((file) => (
             <a key={file.url} href={file.url} target="_blank" rel="noreferrer" className="block text-xs text-sky-700 hover:underline break-all">{file.name} {file.size && `(${file.size})`}</a>
           ))}

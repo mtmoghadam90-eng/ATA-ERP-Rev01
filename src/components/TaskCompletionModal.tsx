@@ -1,6 +1,6 @@
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import React, { useEffect, useRef, useState } from "react";
-import { CheckCircle2, ListPlus, Paperclip, X } from "lucide-react";
+import { CheckCircle2, ListPlus, Paperclip, Pencil, X } from "lucide-react";
 import { contactResultKey, takesContactResult } from "../utils/contactResults";
 import { MAX_ACTIVITY_ATTACHMENTS, formatFileSize, type ActivityAttachment } from "../utils/attachments";
 import {
@@ -12,14 +12,14 @@ import TaskWorkHistory from "./TaskWorkHistory";
 import { tasksApi } from "../api/tasks";
 import { TASK_DONE, TASK_CANCELLED } from "../utils/workBoard";
 import TaskFileLinks from "./TaskFileLinks";
+import { FOLLOW_UP_KIND } from "../utils/salesFollowUp";
 import ContactResultEditor from './ContactResultEditor';
 
 /**
  * The task's work conversation and explicit completion action. A work report
  * appends an entry and keeps the task open. Completion still goes through the
- * host's existing flow, including its optional handoff. Closed tasks only show
- * their history. Hosts can retain the standalone completion form by omitting
- * workLogEnabled.
+ * host's existing flow, including its optional handoff. Hosts can retain the
+ * standalone completion form by omitting workLogEnabled.
  */
 
 export interface TaskCompletionModalProps {
@@ -64,6 +64,7 @@ export interface TaskCompletionModalProps {
    */
   contactResults?: readonly string[];
   onCancel: () => void;
+  onCompletionNoteSaved?: () => void;
   /**
    * Ticks the task off.
    *
@@ -88,9 +89,11 @@ export default function TaskCompletionModal({
   task, contactResults, onCancel, onConfirm, saving,
   users, currentUserId, hasProject, categories, priorityOptions, kinds,
   workLogEnabled = false,
-  onUploadFile,
+  onUploadFile, onCompletionNoteSaved,
 }: TaskCompletionModalProps): React.ReactElement | null {
   const [note, setNote] = useState("");
+  const [editedCompletionNote, setEditedCompletionNote] = useState<string | null>();
+  const [noteCorrection, setNoteCorrection] = useState<{ previous: string | null } | null>(null);
   const [result, setResult] = useState("");
   const [files, setFiles] = useState<ActivityAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -117,6 +120,8 @@ export default function TaskCompletionModal({
   useEffect(() => {
     if (!task) return;
     setNote(workLogEnabled ? "" : task.completionNote ?? "");
+    setEditedCompletionNote(undefined);
+    setNoteCorrection(null);
     setResult(task.contactResult ?? "");
     setFiles(workLogEnabled ? [] : task.completionAttachments ?? []);
     setNextOn(false); setRecipient(""); setMode("SELF"); setKind(""); setNextText("");
@@ -126,6 +131,25 @@ export default function TaskCompletionModal({
   if (!task) return null;
   const closed = workLogEnabled && (task.status === TASK_DONE || task.status === TASK_CANCELLED);
   const busy = !!saving || uploading || posting;
+  const completionNote = editedCompletionNote === undefined ? task.completionNote ?? null : editedCompletionNote;
+  const canCorrectNote = task.status === TASK_DONE && task.taskKind !== FOLLOW_UP_KIND;
+
+  const saveNoteCorrection = async () => {
+    if (busy || !canCorrectNote || !noteCorrection) return;
+    setPosting(true);
+    setProblem(null);
+    try {
+      const saved = await tasksApi.correctCompletionNote(task.id, note, noteCorrection.previous);
+      setEditedCompletionNote(saved.completionNote);
+      setNoteCorrection(null);
+      setHistoryVersion((n) => n + 1);
+      onCompletionNoteSaved?.();
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : "ویرایش شرح کار ممکن نشد.");
+    } finally {
+      setPosting(false);
+    }
+  };
 
   const saveProgress = async () => {
     if (busy || closed) return;
@@ -239,7 +263,26 @@ export default function TaskCompletionModal({
             <div className="bg-slate-50 rounded-lg p-3 text-xs space-y-2" data-task-closed>
               <p className="font-bold">{task.status} {task.completedAt ?? ""}</p>
               {task.status === TASK_DONE && takesContactResult(task) && <ContactResultEditor taskId={task.id} result={task.contactResult} options={contactResults ?? []} onSaved={() => setHistoryVersion((n) => n + 1)} />}
-              {task.completionNote && <p className="whitespace-pre-wrap break-words">{task.completionNote}</p>}
+              {noteCorrection ? (
+                <fieldset disabled={busy} className="space-y-2 min-w-0">
+                  <label htmlFor="task-completion-note-edit" className="block font-medium">شرح کار انجام‌شده</label>
+                  <textarea id="task-completion-note-edit" value={note} onChange={(e) => setNote(e.target.value)} rows={4} className={field} />
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => void saveNoteCorrection()} className="rounded-lg bg-sky-600 text-white px-3 py-1.5">{posting ? "در حال ذخیره…" : "ذخیره شرح کار"}</button>
+                    <button type="button" onClick={() => { setNoteCorrection(null); setProblem(null); }} className="text-slate-500">انصراف</button>
+                  </div>
+                </fieldset>
+              ) : (
+                <>
+                  {completionNote && <p className="whitespace-pre-wrap break-words">{completionNote}</p>}
+                  {canCorrectNote && (
+                    <button type="button" disabled={busy} className="text-sky-700 inline-flex items-center gap-1"
+                      onClick={() => { setNoteCorrection({ previous: completionNote }); setNote(completionNote ?? ""); setProblem(null); }}>
+                      <Pencil size={12} /> ویرایش شرح کار
+                    </button>
+                  )}
+                </>
+              )}
               {task.completionAttachments?.map((file) => <a key={file.url} href={file.url} target="_blank" rel="noreferrer" className="block text-sky-700 hover:underline">{file.name}</a>)}
             </div>
           )}

@@ -5688,6 +5688,10 @@ head("Correcting completed calls from the workboard report and task history");
     if (init?.method === "PUT") {
       const body = JSON.parse(init.body || "{}"); writes.push({ path, body });
       if (refuse) return { ok: false, status: 400, json: async () => ({ success: false, error: "اصلاح تماس ذخیره نشد" }) };
+      if (path.endsWith("/completion-note")) {
+        history.unshift({ id: "note-correction", kind: "COMPLETION_NOTE", text: body.completionNote, authorName: "همکار", createdAt: "2026-11-23T08:10:00Z", attachments: [] });
+        return { ok: true, status: 200, json: async () => ({ success: true, completionNote: body.completionNote }) };
+      }
       const previous = current; current = body.contactResult;
       history.unshift({ id: String(history.length + 1), kind: "CONTACT_RESULT", text: `اصلاح نتیجه تماس از «${previous || "ثبت نشده"}» به «${current || "ثبت نشده"}»`, authorName: "همکار", createdAt: "2026-11-23T08:00:00Z", attachments: [] });
       return { ok: true, status: 200, json: async () => ({ success: true, contactResult: current }) };
@@ -5723,7 +5727,8 @@ head("Correcting completed calls from the workboard report and task history");
   act(() => root.unmount());
   const modalRoot = createRoot(host);
   await act(async () => modalRoot.render(React.createElement(TaskCompletionModal, {
-    task: { id: "call-edit", title: "تماس با مشتری", relatedToType: "customer", taskKind: "GENERAL", status: "انجام شده", completedAt: "1405/09/01", contactResult: current },
+    task: { id: "call-edit", title: "تماس با مشتری", relatedToType: "customer", taskKind: "GENERAL", status: "انجام شده", completedAt: "1405/09/01", contactResult: current,
+      completionNote: "متن قبلی", completionAttachments: [{ name: "report.pdf", size: "2 KB", url: "/uploads/report.pdf" }] },
     workLogEnabled: true, contactResults: options, onCancel: () => {}, onConfirm: () => { completions++; },
   })));
   await settle();
@@ -5731,6 +5736,26 @@ head("Correcting completed calls from the workboard report and task history");
   await click('[title="ویرایش نتیجه تماس"]'); choose(""); await save();
   ok("the result can be cleared without reopening or completing again", current === null && completions === 0 && !host.querySelector("#task-completion-confirm") && !!host.querySelector("[data-task-closed]"));
   ok("the correction appears in the task's history with time", host.querySelectorAll("[data-work-log]").length === 2 && host.querySelector('[data-work-log="2"]')?.textContent?.includes("ثبت نشده") && !!host.querySelector('[data-work-log="2"] time'));
+  const clickButton = async (label: string) => {
+    const button = Array.from(host.querySelectorAll("button")).find((node) => node.textContent?.trim() === label);
+    await act(async () => button?.click());
+  };
+  await clickButton("ویرایش شرح کار");
+  const noteField = host.querySelector<HTMLTextAreaElement>("#task-completion-note-edit");
+  ok("editing starts with the saved work description", noteField?.value === "متن قبلی");
+  if (noteField) {
+    act(() => handlers(noteField).onChange?.({ target: { value: "متن اصلاح‌شده" } }));
+  }
+  await clickButton("ذخیره شرح کار");
+  const noteWrite = writes.at(-1);
+  ok("note edits use the original value and their own endpoint",
+    noteWrite?.path === "/api/tasks/call-edit/completion-note" &&
+    noteWrite?.body.previousNote === "متن قبلی" && noteWrite?.body.completionNote === "متن اصلاح‌شده");
+  const closed = host.querySelector("[data-task-closed]");
+  ok("the updated note appears with the original date and attachment",
+    !!closed?.textContent?.includes("متن اصلاح‌شده") && !!closed.textContent.includes("1405/09/01") &&
+    !!closed.querySelector('a[href="/uploads/report.pdf"]') && completions === 0);
+  ok("the note edit appears in the work history", !!host.querySelector('[data-work-log="note-correction"]')?.textContent?.includes("ویرایش شرح کار نهایی"));
   act(() => modalRoot.unmount()); host.remove(); g.fetch = original;
 }
 
