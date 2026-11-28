@@ -14,7 +14,7 @@ import { topUpActiveWork } from "../services/workLoadService";
 import { contactResultReport } from "../services/contactResultService";
 import { createBulkCallTasks } from "../services/bulkCallTaskService";
 import { handoffFromTask, readHandoffRequest } from "../services/taskHandoffService";
-import { addTaskWorkLog, listTaskWorkLogs } from "../services/taskWorkLogService";
+import { addTaskWorkLog, correctTaskCompletionNote, listTaskWorkLogs } from "../services/taskWorkLogService";
 import { correctContactResult } from '../services/contactResultCorrection';
 
 const WRITABLE: (keyof TaskInput)[] = [
@@ -358,6 +358,16 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       if (!result) { res.status(404).json({ success: false, error: 'وظیفه یافت نشد.' }); return; }
       res.json({ success: true, ...result });
     } catch (err) { sendError(res, err, 'PUT /api/tasks/:id/contact-result'); }
+  });
+
+  app.put("/api/tasks/:id/completion-note", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const result = await correctTaskCompletionNote(req.params.id, req.body ?? {}, user);
+      if (!result) { res.status(404).json({ success: false, error: "وظیفه یافت نشد." }); return; }
+      res.json({ success: true, ...result });
+    } catch (err) { sendError(res, err, "PUT /api/tasks/:id/completion-note"); }
   });
 
   app.get("/api/tasks/:id/work-logs", async (req, res) => {

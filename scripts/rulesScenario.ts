@@ -25095,6 +25095,34 @@ head("Correct a contact result without completing, reopening or re-dating its ta
   ok("sales follow-ups retain their specialised correction flow", chase);
 }
 
+head("Correct the work description without completing the task again");
+{
+  const { correctTaskCompletionNote } = await import("../src/server/services/taskWorkLogService");
+  const task = { status: "انجام شده", completionNote: "متن قبلی", completionAttachments: "files", completedAtJalali: "1405/09/01", contactResult: "پاسخ داد" };
+  const logs: { kind: string; text: string; createdAt: Date }[] = [];
+  const db = { $transaction: async (save: (tx: unknown) => Promise<unknown>) => save({
+    task: {
+      findFirst: async () => task,
+      update: async ({ data }: { data: Partial<typeof task> }) => Object.assign(task, data),
+    },
+    taskWorkLog: { create: async ({ data }: { data: typeof logs[number] }) => logs.push(data) },
+  }) };
+  const edit = (completionNote: string, previousNote: string) => correctTaskCompletionNote(
+    "task", { completionNote, previousNote }, { id: "owner", fullName: "همکار" }, db as never,
+  );
+  await edit("متن جدید", "متن قبلی");
+  ok("the note changes while completion details survive",
+    task.completionNote === "متن جدید" && task.status === "انجام شده" &&
+    task.completionAttachments === "files" && task.completedAtJalali === "1405/09/01" && task.contactResult === "پاسخ داد");
+  ok("the correction is recorded in history",
+    logs[0]?.kind === "COMPLETION_NOTE" && logs[0]?.text === "متن جدید" && logs[0]?.createdAt instanceof Date);
+  await edit("متن جدید", "متن قبلی");
+  eq("an identical retry does not duplicate the correction", logs.length, 1);
+  let stale = false;
+  try { await edit("متن دیگر", "متن قبلی"); } catch { stale = true; }
+  ok("a stale edit cannot overwrite the saved correction", stale && task.completionNote === "متن جدید");
+}
+
 head("Campaign leads are the attributed projects, never an added manual count");
 {
   const { withLinkedProjects } = await import("../src/server/services/adCampaignService");

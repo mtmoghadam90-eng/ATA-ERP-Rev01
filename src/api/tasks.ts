@@ -183,6 +183,8 @@ export interface TaskWorkLog {
 }
 
 export const tasksApi = {
+  correctCompletionNote: (id: string, completionNote: string, previousNote: string | null) =>
+    api.put<{ completionNote: string | null }>(`/api/tasks/${id}/completion-note`, { completionNote, previousNote }),
   correctContactResult: (id: string, contactResult: string | null, previousResult: string | null) =>
     api.put<{ contactResult: string | null }>(`/api/tasks/${id}/contact-result`, { contactResult, previousResult }),
   workLogs: (id: string, page = 1, signal?: AbortSignal) =>

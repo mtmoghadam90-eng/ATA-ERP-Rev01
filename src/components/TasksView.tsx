@@ -1910,6 +1910,7 @@ export default function TasksView({
         saving={completingSaving}
         contactResults={settings.dropdownItems?.contactResults}
         onCancel={() => setCompletingTask(null)}
+        onCompletionNoteSaved={() => list.refresh()}
         users={users}
         currentUserId={currentUser?.id}
         categories={settings.activityCategories}

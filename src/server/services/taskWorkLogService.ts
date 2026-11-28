@@ -1,6 +1,6 @@
 import { getDb } from "../db";
 import type { AuthUser } from "../auth";
-import { visibilityClause } from "./taskService";
+import { completionNoteRefusal, visibilityClause } from "./taskService";
 import { attachmentListColumn, normalizeAttachments, parseAttachmentList } from "../../utils/attachments";
 import { TASK_CANCELLED, TASK_DONE } from "../../utils/workBoard";
 
@@ -44,5 +44,38 @@ export async function addTaskWorkLog(id: string, body: { text?: unknown; attachm
       authorUserId: user.id, authorName: user.fullName || "کاربر", createdAt: new Date(),
     } });
     return { ...row, attachments: files };
+  }, { isolationLevel: "Serializable" });
+}
+
+export async function correctTaskCompletionNote(
+  id: string,
+  body: { completionNote?: unknown; previousNote?: unknown },
+  user: AuthUser,
+  db = getDb(),
+) {
+  if (typeof body.completionNote !== "string") throw new Error("شرح کار نامعتبر است.");
+  const completionNote = body.completionNote.trim() || null;
+  if ((completionNote?.length ?? 0) > 20000) throw new Error("شرح کار نباید بیشتر از ۲۰۰۰۰ نویسه باشد.");
+
+  const visibility = visibilityClause(user);
+  return db.$transaction(async (tx) => {
+    const task = await tx.task.findFirst({ where: visibility ? { AND: [{ id }, visibility] } : { id } });
+    if (!task) return null;
+    if (task.status !== TASK_DONE) throw new Error("فقط شرح کار وظیفهٔ انجام‌شده قابل ویرایش است.");
+    const refusal = completionNoteRefusal(task.taskKind);
+    if (refusal) throw new Error(refusal);
+
+    const previous = task.completionNote ?? null;
+    if (completionNote === previous) return { completionNote };
+    if (body.previousNote !== previous) {
+      throw new Error("شرح کار هم‌زمان تغییر کرده است؛ فرم را دوباره باز کنید.");
+    }
+
+    await tx.task.update({ where: { id }, data: { completionNote } });
+    await tx.taskWorkLog.create({ data: {
+      taskId: id, kind: "COMPLETION_NOTE", text: completionNote,
+      authorUserId: user.id, authorName: user.fullName || "کاربر", createdAt: new Date(),
+    } });
+    return { completionNote };
   }, { isolationLevel: "Serializable" });
 }
